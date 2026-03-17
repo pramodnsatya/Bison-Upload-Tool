@@ -1,0 +1,7 @@
+[build]
+buildCommand = "cd backend && npm install && cd ../frontend && npm install && npm run build"
+
+[deploy]
+startCommand = "cd backend && node server.js"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
