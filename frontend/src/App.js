@@ -834,9 +834,8 @@ function TemplatesTab({ clientId, clients }) {
 
   // Pull-from-campaign state
   const [pullClientId, setPullClientId] = useState(clientId || '');
-  const [searchQ,      setSearchQ]      = useState('');
   const [campaigns,    setCampaigns]    = useState([]);
-  const [searching,    setSearching]    = useState(false);
+  const [loadingCamps, setLoadingCamps] = useState(false);
   const [selectedCamp, setSelectedCamp] = useState(null);
   const [fetchedSteps, setFetchedSteps] = useState(null);
   const [templateName, setTemplateName] = useState('');
@@ -849,20 +848,24 @@ function TemplatesTab({ clientId, clients }) {
   const [showManual,   setShowManual]   = useState(false);
 
   useEffect(()=>{ loadTemplates(); }, []);
-  useEffect(()=>{ if(clientId) setPullClientId(clientId); }, [clientId]);
+  useEffect(()=>{
+    if(clientId) { setPullClientId(clientId); loadAllCampaigns(clientId); }
+  }, [clientId]);
 
   async function loadTemplates() {
     try { const d = await api('/templates'); setTemplates(d); } catch(_) {}
   }
 
-  async function searchCampaigns() {
-    if (!pullClientId) { setError('Select a client first'); return; }
-    setSearching(true); setError('');
+  async function loadAllCampaigns(cid) {
+    if (!cid) { setCampaigns([]); setSelectedCamp(null); setFetchedSteps(null); return; }
+    setLoadingCamps(true); setError('');
     try {
-      const d = await api(`/clients/${pullClientId}/campaigns/search?q=${encodeURIComponent(searchQ)}`);
+      // Fetch up to 200 campaigns — paginate if needed
+      const d = await api(`/clients/${cid}/campaigns/search?q=&per_page=200`);
       setCampaigns(d);
+      setSelectedCamp(null); setFetchedSteps(null);
     } catch(e) { setError(e.message); }
-    finally { setSearching(false); }
+    finally { setLoadingCamps(false); }
   }
 
   async function fetchSteps(camp) {
@@ -1002,42 +1005,45 @@ function TemplatesTab({ clientId, clients }) {
       {tab==='pull' && (
         <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
           <div style={{ background:T2.surface, border:`1px solid ${T2.border}`, borderRadius:12, padding:24 }}>
-            <h3 style={{ fontSize:15, fontWeight:700, marginBottom:16 }}>Search an existing EmailBison campaign</h3>
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr auto', gap:10, alignItems:'end' }}>
+            <h3 style={{ fontSize:15, fontWeight:700, marginBottom:16 }}>Pull sequence steps from an existing campaign</h3>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
+              {/* Client dropdown */}
               <div>
                 <label style={{ fontSize:12, fontWeight:600, color:T2.textSub, display:'block', marginBottom:6 }}>Client</label>
-                <select value={pullClientId} onChange={e=>setPullClientId(e.target.value)}
+                <select value={pullClientId}
+                  onChange={e=>{ setPullClientId(e.target.value); loadAllCampaigns(e.target.value); }}
                   style={{ width:'100%', padding:'9px 12px', border:`1.5px solid ${T2.border}`, borderRadius:9, fontSize:13, fontFamily:'inherit', background:T2.surface, outline:'none', cursor:'pointer' }}>
                   <option value="">Select client...</option>
                   {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
+
+              {/* Campaign dropdown */}
               <div>
-                <label style={{ fontSize:12, fontWeight:600, color:T2.textSub, display:'block', marginBottom:6 }}>Campaign name</label>
-                <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="e.g. Epsilon3_Q1_google"
-                  onKeyDown={e=>e.key==='Enter'&&searchCampaigns()}
-                  style={{ width:'100%', padding:'9px 12px', border:`1.5px solid ${T2.border}`, borderRadius:9, fontSize:13, fontFamily:'inherit', outline:'none', background:T2.surface }} />
+                <label style={{ fontSize:12, fontWeight:600, color:T2.textSub, display:'block', marginBottom:6 }}>
+                  Campaign
+                  {loadingCamps && <span style={{ marginLeft:8, fontSize:11, color:T2.indigo }}>Loading...</span>}
+                </label>
+                <select
+                  value={selectedCamp?.id || ''}
+                  disabled={!pullClientId || loadingCamps || campaigns.length===0}
+                  onChange={e=>{
+                    const camp = campaigns.find(c=>String(c.id)===e.target.value);
+                    if(camp) fetchSteps(camp);
+                  }}
+                  style={{ width:'100%', padding:'9px 12px', border:`1.5px solid ${selectedCamp?T2.indigo:T2.border}`,
+                    borderRadius:9, fontSize:13, fontFamily:'inherit', background:T2.surface, outline:'none',
+                    cursor:(!pullClientId||loadingCamps)?'not-allowed':'pointer', opacity:(!pullClientId||loadingCamps)?0.5:1 }}>
+                  <option value="">{campaigns.length===0 ? (pullClientId?'No campaigns found':'Select client first') : `Select campaign (${campaigns.length})...`}</option>
+                  {campaigns.map(c=><option key={c.id} value={String(c.id)}>{c.name}</option>)}
+                </select>
               </div>
-              <button onClick={searchCampaigns} disabled={searching||!pullClientId}
-                style={{ padding:'9px 18px', background:T2.indigo, color:'#fff', border:'none', borderRadius:9, cursor:searching?'wait':'pointer', fontFamily:'inherit', fontWeight:600, fontSize:13, opacity:(!pullClientId)?0.5:1 }}>
-                {searching ? '...' : 'Search'}
-              </button>
             </div>
 
-            {campaigns.length > 0 && (
-              <div style={{ marginTop:16, border:`1px solid ${T2.border}`, borderRadius:10, overflow:'hidden' }}>
-                {campaigns.map((c,i)=>(
-                  <div key={c.id} onClick={()=>fetchSteps(c)}
-                    style={{ padding:'11px 16px', borderBottom:i<campaigns.length-1?`1px solid ${T2.border}`:'none',
-                      cursor:'pointer', display:'flex', alignItems:'center', gap:10,
-                      background:selectedCamp?.id===c.id?T2.indigoLight:'transparent',
-                      transition:'background .1s' }}>
-                    <div style={{ width:8, height:8, borderRadius:'50%', background:selectedCamp?.id===c.id?T2.indigo:T2.border, flexShrink:0 }} />
-                    <span style={{ fontSize:13, fontWeight:500, flex:1 }}>{c.name}</span>
-                    <span style={{ fontSize:11, color:T2.textMuted }}>{c.id}</span>
-                    {selectedCamp?.id===c.id && loading && <span style={{ fontSize:12, color:T2.indigo }}>Loading steps...</span>}
-                  </div>
-                ))}
+            {selectedCamp && loading && (
+              <div style={{ marginTop:12, display:'flex', alignItems:'center', gap:8, fontSize:13, color:T2.indigo }}>
+                <span style={{ display:'inline-block', width:14, height:14, border:`2px solid ${T2.indigo}`, borderTopColor:'transparent', borderRadius:'50%', animation:'spin .7s linear infinite' }} />
+                Fetching sequence steps from "{selectedCamp.name}"...
               </div>
             )}
           </div>

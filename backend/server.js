@@ -226,14 +226,18 @@ app.get('/clients/:id/campaigns/:cid/sequence', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Search campaigns by name (for template library picker)
+// List/search campaigns (used for template library dropdown)
 app.get('/clients/:id/campaigns/search', async (req, res) => {
   try {
     const q = req.query.q || '';
-    const data = await eb(req.params.id, `/api/campaigns?search=${encodeURIComponent(q)}&per_page=20`);
+    const perPage = req.query.per_page || 200;
+    const qs = q ? `search=${encodeURIComponent(q)}&per_page=${perPage}` : `per_page=${perPage}`;
+    const data = await eb(req.params.id, `/api/campaigns?${qs}`);
     const campaigns = (Array.isArray(data) ? data : (data.data || [])).map(c => ({
       id: c.id, name: c.name, created_at: c.created_at,
     }));
+    // Sort newest first
+    campaigns.sort((a,b) => new Date(b.created_at||0) - new Date(a.created_at||0));
     res.json(campaigns);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
