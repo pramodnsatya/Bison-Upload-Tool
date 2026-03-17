@@ -1,0 +1,14 @@
+{
+  "name": "emailbison-copy-applier",
+  "version": "1.0.0",
+  "description": "Local Playwright script to apply email copy templates to EmailBison campaigns",
+  "type": "module",
+  "scripts": {
+    "apply": "node apply-template.js",
+    "setup": "npx playwright install chromium"
+  },
+  "dependencies": {
+    "playwright": "^1.41.0",
+    "chalk": "^5.3.0"
+  }
+}
