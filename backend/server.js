@@ -4,7 +4,7 @@ import multer from 'multer';
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 
 const require = createRequire(import.meta.url);
 const Papa = require('papaparse');
@@ -166,16 +166,100 @@ app.post('/clients/:id/campaigns/:cid/leads', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// NOTE: EmailBison API does not expose a POST endpoint to create sequence steps.
-// The sequence builder is UI-only. This endpoint is intentionally left as a no-op
-// so the frontend can proceed past the copy step gracefully.
-app.post('/clients/:id/campaigns/:cid/sequence', async (req, res) => {
-  res.json({ ok: true, uiOnly: true });
-});
+
 
 app.post('/clients/:id/campaigns/:cid/senders', async (req, res) => {
   try { await eb(req.params.id, `/api/campaigns/${req.params.cid}`, 'PATCH', { sender_email_ids: req.body.senderIds }); res.json({ ok: true }); }
   catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+
+// ── Template library ─────────────────────────────────────────────────────────
+const TEMPLATES_FILE = join(__dirname, 'templates.json');
+
+function loadTemplates() {
+  try { return JSON.parse(readFileSync(TEMPLATES_FILE, 'utf8')); } catch { return []; }
+}
+function saveTemplates(t) {
+  writeFileSync(TEMPLATES_FILE, JSON.stringify(t, null, 2));
+}
+
+// List all saved templates
+app.get('/templates', (_req, res) => res.json(loadTemplates()));
+
+// Save a new template
+app.post('/templates', (req, res) => {
+  try {
+    const { name, clientId, sourceCampaignId, sourceCampaignName, steps } = req.body;
+    if (!name || !steps?.length) return res.status(400).json({ error: 'name and steps required' });
+    const templates = loadTemplates();
+    const id = `tpl_${Date.now()}`;
+    const tpl = { id, name, clientId, sourceCampaignId, sourceCampaignName, steps, createdAt: new Date().toISOString() };
+    templates.push(tpl);
+    saveTemplates(templates);
+    res.json(tpl);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Delete a template
+app.delete('/templates/:id', (req, res) => {
+  try {
+    const templates = loadTemplates().filter(t => t.id !== req.params.id);
+    saveTemplates(templates);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Fetch sequence steps from an existing EmailBison campaign
+app.get('/clients/:id/campaigns/:cid/sequence', async (req, res) => {
+  try {
+    const data = await eb(req.params.id, `/api/campaigns/sequence-steps?campaign_id=${req.params.cid}&per_page=20`);
+    const steps = (Array.isArray(data) ? data : (data.data || [])).map(s => ({
+      id:          s.id,
+      subject:     s.subject || '',
+      body:        s.body || s.content || '',
+      delay_days:  s.delay_days ?? s.delay ?? 0,
+      is_reply:    s.reply_to_thread ?? s.is_reply ?? false,
+      order:       s.order ?? s.position ?? 0,
+    })).sort((a, b) => a.order - b.order);
+    res.json(steps);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Search campaigns by name (for template library picker)
+app.get('/clients/:id/campaigns/search', async (req, res) => {
+  try {
+    const q = req.query.q || '';
+    const data = await eb(req.params.id, `/api/campaigns?search=${encodeURIComponent(q)}&per_page=20`);
+    const campaigns = (Array.isArray(data) ? data : (data.data || [])).map(c => ({
+      id: c.id, name: c.name, created_at: c.created_at,
+    }));
+    res.json(campaigns);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Apply sequence steps to a campaign (attempt undocumented create endpoint)
+app.post('/clients/:id/campaigns/:cid/sequence', async (req, res) => {
+  const { steps } = req.body;
+  const results = { applied: 0, failed: 0, apiSupported: false };
+  for (let i = 0; i < steps.length; i++) {
+    const s = steps[i];
+    try {
+      await eb(req.params.id, '/api/campaigns/sequence-steps', 'POST', {
+        campaign_id: parseInt(req.params.cid),
+        subject: s.subject,
+        body: s.body,
+        delay_days: i === 0 ? 0 : (s.delay_days ?? i * 3),
+        reply_to_thread: i > 0,
+        order: i + 1,
+      });
+      results.applied++;
+      results.apiSupported = true;
+    } catch (_) {
+      results.failed++;
+    }
+  }
+  res.json({ ok: true, ...results });
 });
 
 // ── Serve React build (production / Railway) ──────────────────────────────────

@@ -282,6 +282,7 @@ function MappingDialog({ columns, onConfirm, onCancel }) {
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [step, setStep]     = useState(1);
+  const [activeTab, setActiveTab] = useState('deploy'); // 'deploy' | 'templates'
   const [log,  setLog]      = useState([]);
   const addLog = (msg, t='info') => setLog(l=>[...l,{msg,t,time:new Date().toLocaleTimeString()}]);
 
@@ -452,11 +453,25 @@ export default function App() {
       {/* Top nav */}
       <div style={{ background:T.surface, borderBottom:`1px solid ${T.border}`, padding:'0 24px' }}>
         <div style={{ maxWidth:920, margin:'0 auto', height:60, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-            <div style={{ width:32, height:32, background:T.indigo, borderRadius:8, display:'flex', alignItems:'center', justifyContent:'center', fontSize:16 }}>📧</div>
-            <div>
-              <div style={{ fontWeight:700, fontSize:15, color:T.text, lineHeight:1.2 }}>Campaign Deployer</div>
-              <div style={{ fontSize:11, color:T.textMuted }}>Founderled</div>
+          <div style={{ display:'flex', alignItems:'center', gap:24 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+              <div style={{ width:32, height:32, background:T.indigo, borderRadius:8, display:'flex', alignItems:'center', justifyContent:'center', fontSize:16 }}>📧</div>
+              <div>
+                <div style={{ fontWeight:700, fontSize:15, color:T.text, lineHeight:1.2 }}>Campaign Deployer</div>
+                <div style={{ fontSize:11, color:T.textMuted }}>Founderled</div>
+              </div>
+            </div>
+            {/* Tab nav */}
+            <div style={{ display:'flex', gap:4 }}>
+              {[['deploy','🚀 Deploy'],['templates','📋 Templates']].map(([id,label])=>(
+                <button key={id} onClick={()=>setActiveTab(id)}
+                  style={{ padding:'6px 14px', borderRadius:8, border:'none', cursor:'pointer', fontFamily:'inherit',
+                    fontSize:13, fontWeight:activeTab===id?600:400, transition:'all .15s',
+                    background:activeTab===id?T.indigoLight:T.surface,
+                    color:activeTab===id?T.indigo:T.textSub }}>
+                  {label}
+                </button>
+              ))}
             </div>
           </div>
           {connStatus==='ok' && (
@@ -469,6 +484,12 @@ export default function App() {
       </div>
 
       <div style={{ maxWidth:920, margin:'0 auto', padding:'32px 20px 60px' }}>
+
+        {/* ── TEMPLATES TAB ──────────────────────────────────────────────── */}
+        {activeTab==='templates' && <TemplatesTab clientId={clientId} clients={clients} />}
+
+        {/* ── DEPLOY TAB ─────────────────────────────────────────────────── */}
+        {activeTab==='deploy' && <>
         <StepBar current={step} />
 
         {error && <Alert type="error">{error}</Alert>}
@@ -797,7 +818,321 @@ export default function App() {
             </div>
           </div>
         )}
+        </> /* end deploy tab */ }
       </div>
+    </div>
+  );
+}
+
+// ─── Templates Tab ────────────────────────────────────────────────────────────
+function TemplatesTab({ clientId, clients }) {
+  const [templates,    setTemplates]    = useState([]);
+  const [tab,          setTab]          = useState('saved'); // 'saved' | 'pull'
+  const [loading,      setLoading]      = useState(false);
+  const [error,        setError]        = useState('');
+  const [success,      setSuccess]      = useState('');
+
+  // Pull-from-campaign state
+  const [pullClientId, setPullClientId] = useState(clientId || '');
+  const [searchQ,      setSearchQ]      = useState('');
+  const [campaigns,    setCampaigns]    = useState([]);
+  const [searching,    setSearching]    = useState(false);
+  const [selectedCamp, setSelectedCamp] = useState(null);
+  const [fetchedSteps, setFetchedSteps] = useState(null);
+  const [templateName, setTemplateName] = useState('');
+
+  // Manual template state
+  const [manualName,   setManualName]   = useState('');
+  const [manualSteps,  setManualSteps]  = useState([
+    { subject:'', body:'', delay_days:0, is_reply:false },
+  ]);
+  const [showManual,   setShowManual]   = useState(false);
+
+  useEffect(()=>{ loadTemplates(); }, []);
+  useEffect(()=>{ if(clientId) setPullClientId(clientId); }, [clientId]);
+
+  async function loadTemplates() {
+    try { const d = await api('/templates'); setTemplates(d); } catch(_) {}
+  }
+
+  async function searchCampaigns() {
+    if (!pullClientId) { setError('Select a client first'); return; }
+    setSearching(true); setError('');
+    try {
+      const d = await api(`/clients/${pullClientId}/campaigns/search?q=${encodeURIComponent(searchQ)}`);
+      setCampaigns(d);
+    } catch(e) { setError(e.message); }
+    finally { setSearching(false); }
+  }
+
+  async function fetchSteps(camp) {
+    setSelectedCamp(camp);
+    setFetchedSteps(null); setTemplateName(camp.name);
+    setLoading(true); setError('');
+    try {
+      const steps = await api(`/clients/${pullClientId}/campaigns/${camp.id}/sequence`);
+      if (!steps.length) { setError('No sequence steps found in this campaign.'); setLoading(false); return; }
+      setFetchedSteps(steps);
+    } catch(e) { setError(e.message); }
+    finally { setLoading(false); }
+  }
+
+  async function saveFromCampaign() {
+    if (!templateName.trim() || !fetchedSteps) return;
+    setLoading(true); setError('');
+    try {
+      await api('/templates', { method:'POST', body:JSON.stringify({
+        name: templateName.trim(),
+        clientId: pullClientId,
+        sourceCampaignId: selectedCamp.id,
+        sourceCampaignName: selectedCamp.name,
+        steps: fetchedSteps,
+      })});
+      setSuccess(`Template "${templateName}" saved!`);
+      setFetchedSteps(null); setSelectedCamp(null); setTemplateName(''); setCampaigns([]);
+      loadTemplates();
+    } catch(e) { setError(e.message); }
+    finally { setLoading(false); }
+  }
+
+  async function saveManual() {
+    if (!manualName.trim()) { setError('Enter a template name'); return; }
+    const validSteps = manualSteps.filter(s => s.subject || s.body);
+    if (!validSteps.length) { setError('At least one email step is required'); return; }
+    setLoading(true); setError('');
+    try {
+      await api('/templates', { method:'POST', body:JSON.stringify({
+        name: manualName.trim(), steps: manualSteps,
+      })});
+      setSuccess(`Template "${manualName}" saved!`);
+      setManualName(''); setManualSteps([{subject:'',body:'',delay_days:0,is_reply:false}]);
+      setShowManual(false); loadTemplates();
+    } catch(e) { setError(e.message); }
+    finally { setLoading(false); }
+  }
+
+  async function deleteTemplate(id, name) {
+    if (!window.confirm(`Delete template "${name}"?`)) return;
+    try { await api(`/templates/${id}`, { method:'DELETE' }); loadTemplates(); } catch(e) { setError(e.message); }
+  }
+
+  const T2 = {
+    ...{ border:'#E5E7EB', surface:'#FFFFFF', bg:'#F9FAFB', text:'#111827',
+         textSub:'#6B7280', textMuted:'#9CA3AF', indigo:'#6366F1', indigoLight:'#EEF2FF',
+         success:'#10B981', warning:'#F59E0B', error:'#EF4444', surfaceAlt:'#F3F4F6' }
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom:24 }}>
+        <h2 style={{ fontSize:22, fontWeight:700, marginBottom:4 }}>Email Copy Templates</h2>
+        <p style={{ fontSize:14, color:T2.textSub }}>
+          Save email sequences as reusable templates. Pull from any existing EmailBison campaign or create manually.
+        </p>
+      </div>
+
+      {error && <div style={{ background:'#FEF2F2', border:'1px solid #FECACA', borderRadius:10, padding:'10px 14px', fontSize:13, color:'#991B1B', marginBottom:12, display:'flex', gap:8 }}><span>✕</span>{error}</div>}
+      {success && <div style={{ background:'#F0FDF4', border:'1px solid #BBF7D0', borderRadius:10, padding:'10px 14px', fontSize:13, color:'#166534', marginBottom:12, display:'flex', gap:8, alignItems:'center' }}><span>✓</span>{success}<button onClick={()=>setSuccess('')} style={{marginLeft:'auto',background:'none',border:'none',cursor:'pointer',color:'#166534',fontSize:16}}>×</button></div>}
+
+      {/* Sub-tabs */}
+      <div style={{ display:'flex', gap:8, marginBottom:24, borderBottom:`1px solid ${T2.border}`, paddingBottom:0 }}>
+        {[['saved','📁 Saved Templates'],['pull','🔗 Pull from Campaign'],['manual','✏️ Create Manually']].map(([id,label])=>(
+          <button key={id} onClick={()=>setTab(id)}
+            style={{ padding:'8px 16px', border:'none', cursor:'pointer', fontFamily:'inherit', fontSize:13,
+              fontWeight:tab===id?600:400, background:'none', borderBottom:tab===id?`2px solid ${T2.indigo}`:'2px solid transparent',
+              color:tab===id?T2.indigo:T2.textSub, marginBottom:-1, transition:'all .15s' }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Saved Templates ───────────────────────────────────────────────── */}
+      {tab==='saved' && (
+        <div>
+          {templates.length === 0
+            ? (
+              <div style={{ textAlign:'center', padding:'48px 24px', border:`2px dashed ${T2.border}`, borderRadius:12 }}>
+                <div style={{ fontSize:32, marginBottom:12 }}>📋</div>
+                <div style={{ fontWeight:600, color:T2.text, marginBottom:6 }}>No templates saved yet</div>
+                <div style={{ fontSize:13, color:T2.textSub }}>Pull from an existing campaign or create one manually.</div>
+              </div>
+            )
+            : (
+              <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+                {templates.map(tpl=>(
+                  <div key={tpl.id} style={{ background:T2.surface, border:`1px solid ${T2.border}`, borderRadius:12, overflow:'hidden' }}>
+                    <div style={{ padding:'16px 20px', display:'flex', alignItems:'flex-start', gap:12 }}>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontWeight:700, fontSize:15, marginBottom:4 }}>{tpl.name}</div>
+                        <div style={{ fontSize:12, color:T2.textMuted, display:'flex', gap:12, flexWrap:'wrap' }}>
+                          {tpl.sourceCampaignName && <span>From: {tpl.sourceCampaignName}</span>}
+                          <span>{tpl.steps.length} email{tpl.steps.length>1?'s':''}</span>
+                          <span>Saved {new Date(tpl.createdAt).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                      <button onClick={()=>deleteTemplate(tpl.id, tpl.name)}
+                        style={{ background:'none', border:`1px solid ${T2.border}`, borderRadius:8, padding:'5px 10px', cursor:'pointer', fontSize:12, color:T2.textMuted, fontFamily:'inherit' }}>
+                        Delete
+                      </button>
+                    </div>
+                    {/* Step preview */}
+                    <div style={{ borderTop:`1px solid ${T2.border}`, background:T2.bg }}>
+                      {tpl.steps.map((s,i)=>(
+                        <div key={i} style={{ padding:'10px 20px', borderBottom: i<tpl.steps.length-1?`1px solid ${T2.border}`:'none', display:'grid', gridTemplateColumns:'auto 1fr', gap:'0 12px' }}>
+                          <div style={{ width:22, height:22, borderRadius:'50%', background:i===0?T2.indigo:'#E5E7EB', color:i===0?'#fff':T2.textSub, display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:700, flexShrink:0, marginTop:1 }}>{i+1}</div>
+                          <div>
+                            <div style={{ fontSize:13, fontWeight:600, color:T2.text }}>{s.subject || '(no subject)'}</div>
+                            <div style={{ fontSize:12, color:T2.textMuted, marginTop:2, display:'flex', gap:10 }}>
+                              {i>0 && <span>Day {s.delay_days} · Reply in thread</span>}
+                              <span>{(s.body||'').split(/\s+/).slice(0,8).join(' ')}{(s.body||'').split(/\s+/).length>8?'…':''}</span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+          }
+        </div>
+      )}
+
+      {/* ── Pull from Campaign ────────────────────────────────────────────── */}
+      {tab==='pull' && (
+        <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+          <div style={{ background:T2.surface, border:`1px solid ${T2.border}`, borderRadius:12, padding:24 }}>
+            <h3 style={{ fontSize:15, fontWeight:700, marginBottom:16 }}>Search an existing EmailBison campaign</h3>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr auto', gap:10, alignItems:'end' }}>
+              <div>
+                <label style={{ fontSize:12, fontWeight:600, color:T2.textSub, display:'block', marginBottom:6 }}>Client</label>
+                <select value={pullClientId} onChange={e=>setPullClientId(e.target.value)}
+                  style={{ width:'100%', padding:'9px 12px', border:`1.5px solid ${T2.border}`, borderRadius:9, fontSize:13, fontFamily:'inherit', background:T2.surface, outline:'none', cursor:'pointer' }}>
+                  <option value="">Select client...</option>
+                  {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize:12, fontWeight:600, color:T2.textSub, display:'block', marginBottom:6 }}>Campaign name</label>
+                <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="e.g. Epsilon3_Q1_google"
+                  onKeyDown={e=>e.key==='Enter'&&searchCampaigns()}
+                  style={{ width:'100%', padding:'9px 12px', border:`1.5px solid ${T2.border}`, borderRadius:9, fontSize:13, fontFamily:'inherit', outline:'none', background:T2.surface }} />
+              </div>
+              <button onClick={searchCampaigns} disabled={searching||!pullClientId}
+                style={{ padding:'9px 18px', background:T2.indigo, color:'#fff', border:'none', borderRadius:9, cursor:searching?'wait':'pointer', fontFamily:'inherit', fontWeight:600, fontSize:13, opacity:(!pullClientId)?0.5:1 }}>
+                {searching ? '...' : 'Search'}
+              </button>
+            </div>
+
+            {campaigns.length > 0 && (
+              <div style={{ marginTop:16, border:`1px solid ${T2.border}`, borderRadius:10, overflow:'hidden' }}>
+                {campaigns.map((c,i)=>(
+                  <div key={c.id} onClick={()=>fetchSteps(c)}
+                    style={{ padding:'11px 16px', borderBottom:i<campaigns.length-1?`1px solid ${T2.border}`:'none',
+                      cursor:'pointer', display:'flex', alignItems:'center', gap:10,
+                      background:selectedCamp?.id===c.id?T2.indigoLight:'transparent',
+                      transition:'background .1s' }}>
+                    <div style={{ width:8, height:8, borderRadius:'50%', background:selectedCamp?.id===c.id?T2.indigo:T2.border, flexShrink:0 }} />
+                    <span style={{ fontSize:13, fontWeight:500, flex:1 }}>{c.name}</span>
+                    <span style={{ fontSize:11, color:T2.textMuted }}>{c.id}</span>
+                    {selectedCamp?.id===c.id && loading && <span style={{ fontSize:12, color:T2.indigo }}>Loading steps...</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {fetchedSteps && (
+            <div style={{ background:T2.surface, border:`1px solid ${T2.border}`, borderRadius:12, padding:24 }}>
+              <h3 style={{ fontSize:15, fontWeight:700, marginBottom:4 }}>Sequence from "{selectedCamp.name}"</h3>
+              <p style={{ fontSize:13, color:T2.textSub, marginBottom:16 }}>{fetchedSteps.length} email steps pulled successfully.</p>
+
+              <div style={{ border:`1px solid ${T2.border}`, borderRadius:10, overflow:'hidden', marginBottom:20 }}>
+                {fetchedSteps.map((s,i)=>(
+                  <div key={i} style={{ padding:'12px 18px', borderBottom:i<fetchedSteps.length-1?`1px solid ${T2.border}`:'none', background:i%2===0?T2.bg:T2.surface }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:4 }}>
+                      <div style={{ width:20, height:20, borderRadius:'50%', background:i===0?T2.indigo:'#6B7280', color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:700, flexShrink:0 }}>{i+1}</div>
+                      <span style={{ fontWeight:600, fontSize:13 }}>{s.subject || '(no subject)'}</span>
+                      {i>0 && <span style={{ fontSize:11, color:T2.textMuted, marginLeft:'auto' }}>Day {s.delay_days} · Reply</span>}
+                    </div>
+                    <div style={{ fontSize:12, color:T2.textMuted, marginLeft:30, fontFamily:'monospace', whiteSpace:'pre-wrap', maxHeight:60, overflow:'hidden' }}>
+                      {(s.body||'').slice(0,200)}{(s.body||'').length>200?'…':''}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display:'flex', gap:10, alignItems:'flex-end' }}>
+                <div style={{ flex:1 }}>
+                  <label style={{ fontSize:12, fontWeight:600, color:T2.textSub, display:'block', marginBottom:6 }}>Save as template named</label>
+                  <input value={templateName} onChange={e=>setTemplateName(e.target.value)} placeholder="e.g. Epsilon3 — Insurance ICP v2"
+                    style={{ width:'100%', padding:'9px 12px', border:`1.5px solid ${T2.border}`, borderRadius:9, fontSize:13, fontFamily:'inherit', outline:'none', background:T2.surface }} />
+                </div>
+                <button onClick={saveFromCampaign} disabled={loading||!templateName.trim()}
+                  style={{ padding:'9px 20px', background:T2.success, color:'#fff', border:'none', borderRadius:9, cursor:'pointer', fontFamily:'inherit', fontWeight:600, fontSize:13, opacity:!templateName.trim()?0.5:1, whiteSpace:'nowrap' }}>
+                  {loading ? 'Saving...' : '💾 Save Template'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Create Manually ───────────────────────────────────────────────── */}
+      {tab==='manual' && (
+        <div style={{ background:T2.surface, border:`1px solid ${T2.border}`, borderRadius:12, padding:24 }}>
+          <h3 style={{ fontSize:15, fontWeight:700, marginBottom:16 }}>Create a template manually</h3>
+
+          <div style={{ marginBottom:20 }}>
+            <label style={{ fontSize:12, fontWeight:600, color:T2.textSub, display:'block', marginBottom:6 }}>Template Name</label>
+            <input value={manualName} onChange={e=>setManualName(e.target.value)} placeholder="e.g. Soona — Ecommerce Outreach v1"
+              style={{ width:'100%', maxWidth:420, padding:'9px 12px', border:`1.5px solid ${T2.border}`, borderRadius:9, fontSize:13, fontFamily:'inherit', outline:'none', background:T2.surface }} />
+          </div>
+
+          <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+            {manualSteps.map((s,i)=>(
+              <div key={i} style={{ border:`1.5px solid ${i===0?T2.border:'#D1FAE5'}`, borderRadius:12, overflow:'hidden' }}>
+                <div style={{ padding:'10px 16px', background:i===0?T2.bg:'#ECFDF5', borderBottom:`1px solid ${i===0?T2.border:'#A7F3D0'}`, display:'flex', alignItems:'center', gap:10 }}>
+                  <div style={{ width:22, height:22, borderRadius:'50%', background:i===0?T2.indigo:T2.success, color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:700 }}>{i+1}</div>
+                  <span style={{ fontWeight:600, fontSize:13 }}>{i===0?'Email 1 — Initial outreach':`Follow-up ${i} — Reply in thread`}</span>
+                  {i>0 && (
+                    <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:8 }}>
+                      <span style={{ fontSize:12, color:T2.textSub }}>Send on day</span>
+                      <input type="number" min={1} max={30} value={s.delay_days}
+                        onChange={e=>setManualSteps(prev=>prev.map((x,j)=>j===i?{...x,delay_days:parseInt(e.target.value)||1}:x))}
+                        style={{ width:50, padding:'4px 8px', border:`1.5px solid ${T2.border}`, borderRadius:8, fontSize:12, textAlign:'center', fontFamily:'inherit', outline:'none' }} />
+                      <button onClick={()=>setManualSteps(prev=>prev.filter((_,j)=>j!==i))}
+                        style={{ background:'none', border:'none', cursor:'pointer', color:T2.textMuted, fontSize:16, padding:'0 4px' }}>✕</button>
+                    </div>
+                  )}
+                </div>
+                <div style={{ padding:'12px 16px 14px', display:'flex', flexDirection:'column', gap:10 }}>
+                  <input value={s.subject} onChange={e=>setManualSteps(prev=>prev.map((x,j)=>j===i?{...x,subject:e.target.value}:x))}
+                    placeholder={i===0?'Subject line':'Re: [original subject]'}
+                    style={{ width:'100%', padding:'8px 12px', border:`1.5px solid ${T2.border}`, borderRadius:8, fontSize:13, fontFamily:'inherit', outline:'none', background:T2.surface }} />
+                  <textarea rows={5} value={s.body} onChange={e=>setManualSteps(prev=>prev.map((x,j)=>j===i?{...x,body:e.target.value}:x))}
+                    placeholder={i===0?'Hi {first_name},\n\n[email body]\n\nBest,\n[Your name]':'[follow-up body]'}
+                    style={{ width:'100%', padding:'8px 12px', border:`1.5px solid ${T2.border}`, borderRadius:8, fontSize:12, fontFamily:'monospace', outline:'none', resize:'vertical', lineHeight:1.7, background:T2.surface }} />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {manualSteps.length < 5 && (
+            <button onClick={()=>setManualSteps(prev=>[...prev,{subject:'',body:'',delay_days:prev.length*3,is_reply:true}])}
+              style={{ marginTop:12, width:'100%', padding:'10px', border:`2px dashed ${T2.border}`, borderRadius:10, background:'transparent', cursor:'pointer', fontSize:13, color:T2.textSub, fontFamily:'inherit' }}>
+              + Add follow-up email
+            </button>
+          )}
+
+          <div style={{ marginTop:20, display:'flex', gap:10 }}>
+            <button onClick={saveManual} disabled={loading||!manualName.trim()}
+              style={{ padding:'10px 22px', background:T2.indigo, color:'#fff', border:'none', borderRadius:9, cursor:'pointer', fontFamily:'inherit', fontWeight:600, fontSize:13, opacity:!manualName.trim()?0.5:1 }}>
+              {loading ? 'Saving...' : '💾 Save Template'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
