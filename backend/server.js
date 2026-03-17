@@ -107,10 +107,46 @@ app.post('/clients/:id/campaigns', async (req, res) => {
 
 app.post('/clients/:id/campaigns/:cid/leads', async (req, res) => {
   try {
-    const mapped = req.body.leads.filter(l => l.email).map(l => { const o = { email: l.email }; if (l.first_name) o.first_name = l.first_name; if (l.last_name) o.last_name = l.last_name; if (l.company_name) o.company_name = l.company_name; if (l.job_title) o.job_title = l.job_title; if (l.linkedin_url) o.linkedin_url = l.linkedin_url; return o; });
-    let uploaded = 0;
-    for (let i = 0; i < mapped.length; i += 100) { await eb(req.params.id, `/api/campaigns/${req.params.cid}/leads`, 'POST', { leads: mapped.slice(i, i + 100) }); uploaded += Math.min(100, mapped.length - i); }
-    res.json({ ok: true, uploaded });
+    const { leads } = req.body;
+    const mapped = leads.filter(l => l.email).map(l => {
+      const o = { email: l.email };
+      if (l.first_name)   o.first_name   = l.first_name;
+      if (l.last_name)    o.last_name    = l.last_name;
+      if (l.company_name) o.company_name = l.company_name;
+      if (l.job_title)    o.job_title    = l.job_title;
+      if (l.linkedin_url) o.linkedin_url = l.linkedin_url;
+      return o;
+    });
+
+    // Step 1: Create/upsert each lead in EmailBison to get their IDs
+    const allLeadIds = [];
+    const BATCH = 50;
+    for (let i = 0; i < mapped.length; i += BATCH) {
+      const batch = mapped.slice(i, i + BATCH);
+      for (const lead of batch) {
+        try {
+          const created = await eb(req.params.id, '/api/leads', 'POST', lead);
+          const leadId = created.id || created.data?.id || created.lead?.id;
+          if (leadId) allLeadIds.push(leadId);
+        } catch (err) {
+          // Lead may already exist — search for it by email
+          try {
+            const found = await eb(req.params.id, `/api/leads?search=${encodeURIComponent(lead.email)}&per_page=1`);
+            const arr = found.data || found;
+            if (Array.isArray(arr) && arr[0]?.id) allLeadIds.push(arr[0].id);
+          } catch (_) { /* skip */ }
+        }
+      }
+    }
+
+    // Step 2: Attach leads to campaign using correct endpoint
+    for (let i = 0; i < allLeadIds.length; i += 100) {
+      await eb(req.params.id, `/api/campaigns/${req.params.cid}/leads/attach-leads`, 'POST', {
+        lead_ids: allLeadIds.slice(i, i + 100),
+      });
+    }
+
+    res.json({ ok: true, uploaded: allLeadIds.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
