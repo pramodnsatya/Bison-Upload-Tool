@@ -107,7 +107,9 @@ app.post('/clients/:id/campaigns', async (req, res) => {
 
 app.post('/clients/:id/campaigns/:cid/leads', async (req, res) => {
   try {
-    const { leads } = req.body;
+    const { leads, duplicateMode = 'skip' } = req.body;
+    // duplicateMode: 'skip' | 'update' | 'replace'
+
     const mapped = leads.filter(l => l.email).map(l => {
       const o = { email: l.email };
       if (l.first_name)   o.first_name   = l.first_name;
@@ -118,43 +120,57 @@ app.post('/clients/:id/campaigns/:cid/leads', async (req, res) => {
       return o;
     });
 
-    // Step 1: Create/upsert each lead in EmailBison to get their IDs
     const allLeadIds = [];
+    let skipped = 0;
     const BATCH = 50;
+
     for (let i = 0; i < mapped.length; i += BATCH) {
       const batch = mapped.slice(i, i + BATCH);
       for (const lead of batch) {
         try {
+          // Try to create the lead
           const created = await eb(req.params.id, '/api/leads', 'POST', lead);
           const leadId = created.id || created.data?.id || created.lead?.id;
           if (leadId) allLeadIds.push(leadId);
         } catch (err) {
-          // Lead may already exist — search for it by email
+          // Lead likely already exists — look it up
           try {
             const found = await eb(req.params.id, `/api/leads?search=${encodeURIComponent(lead.email)}&per_page=1`);
-            const arr = found.data || found;
-            if (Array.isArray(arr) && arr[0]?.id) allLeadIds.push(arr[0].id);
-          } catch (_) { /* skip */ }
+            const arr = Array.isArray(found) ? found : (found.data || []);
+            const existing = arr.find(l => l.email === lead.email);
+
+            if (existing) {
+              if (duplicateMode === 'skip') {
+                skipped++;
+                // Still attach existing lead to campaign
+                allLeadIds.push(existing.id);
+              } else if (duplicateMode === 'update' || duplicateMode === 'replace') {
+                // Update the lead fields via PUT
+                await eb(req.params.id, `/api/leads/${existing.id}`, 'PUT', lead);
+                allLeadIds.push(existing.id);
+              }
+            }
+          } catch (_) { /* truly skip */ }
         }
       }
     }
 
-    // Step 2: Attach leads to campaign using correct endpoint
+    // Attach all collected lead IDs to the campaign
     for (let i = 0; i < allLeadIds.length; i += 100) {
       await eb(req.params.id, `/api/campaigns/${req.params.cid}/leads/attach-leads`, 'POST', {
         lead_ids: allLeadIds.slice(i, i + 100),
       });
     }
 
-    res.json({ ok: true, uploaded: allLeadIds.length });
+    res.json({ ok: true, uploaded: allLeadIds.length, skipped });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// NOTE: EmailBison API does not expose a POST endpoint to create sequence steps.
+// The sequence builder is UI-only. This endpoint is intentionally left as a no-op
+// so the frontend can proceed past the copy step gracefully.
 app.post('/clients/:id/campaigns/:cid/sequence', async (req, res) => {
-  try {
-    for (let i = 0; i < req.body.steps.length; i++) { const s = req.body.steps[i]; await eb(req.params.id, '/api/campaigns/sequence-steps', 'POST', { campaign_id: parseInt(req.params.cid), subject: s.subject, body: s.body, delay: i === 0 ? 0 : s.delay_days, reply_to_thread: i > 0 }); }
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  res.json({ ok: true, uiOnly: true });
 });
 
 app.post('/clients/:id/campaigns/:cid/senders', async (req, res) => {

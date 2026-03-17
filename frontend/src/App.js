@@ -79,6 +79,9 @@ const T = {
 
   // Status
   success: '#10B981',
+  green: '#2D6A4F',
+  greenLight: '#E8F5EE',
+  greenBorder: '#B7DEC8',
   warning: '#F59E0B',
   error:   '#EF4444',
 
@@ -306,8 +309,11 @@ export default function App() {
   const [campaignPlan, setCampaignPlan] = useState([]);
   const [created,      setCreated]      = useState([]);
 
-  const [rawCopy,      setRawCopy]      = useState('');
-  const [parsedSteps,  setParsedSteps]  = useState(null);
+  const [duplicateMode, setDuplicateMode] = useState('skip');
+  // emailSteps: array of {subject, body, delay_days, isReply}
+  const [emailSteps, setEmailSteps] = useState([
+    { subject: '', body: '', delay_days: 0, isReply: false },
+  ]);
 
   const [allSenders,   setAllSenders]   = useState([]);
   const [selSenders,   setSelSenders]   = useState({});
@@ -378,25 +384,24 @@ export default function App() {
     setLoading(true); clearErr();
     try {
       for (const c of created) {
-        addLog(`Uploading ${c.leads.length} leads → ${c.name}...`);
-        const r = await api(`/clients/${clientId}/campaigns/${c.id}/leads`, { method:'POST', body:JSON.stringify({ leads:c.leads }) });
-        addLog(`✓ ${c.name}: ${r.uploaded} uploaded`,'success');
+        addLog(`Uploading ${c.leads.length} leads → ${c.name} (${duplicateMode} duplicates)...`);
+        const r = await api(`/clients/${clientId}/campaigns/${c.id}/leads`, {
+          method:'POST',
+          body:JSON.stringify({ leads:c.leads, duplicateMode }),
+        });
+        const skipMsg = r.skipped > 0 ? `, ${r.skipped} duplicates ${duplicateMode}ped` : '';
+        addLog(`✓ ${c.name}: ${r.uploaded} uploaded${skipMsg}`,'success');
       }
       setStep(6);
     } catch(e) { setError(e.message); }
     finally { setLoading(false); }
   }
 
-  // Step 6
-  async function applyCopy() {
-    if (!parsedSteps) return;
+  // Step 6 — email copy is UI-only in EmailBison; we save it for reference and move to senders
+  async function proceedFromCopy() {
     setLoading(true); clearErr();
     try {
-      for (const c of created) {
-        addLog(`Applying copy → ${c.name}...`);
-        await api(`/clients/${clientId}/campaigns/${c.id}/sequence`, { method:'POST', body:JSON.stringify({ steps:parsedSteps }) });
-        addLog(`✓ ${c.name}: ${parsedSteps.length} steps`,'success');
-      }
+      addLog('Email copy saved. Fetching sender accounts...');
       const senders = await api(`/clients/${clientId}/sender-emails`);
       const list = Array.isArray(senders) ? senders : [];
       setAllSenders(list);
@@ -411,6 +416,16 @@ export default function App() {
       setSelSenders(sel); setStep(7);
     } catch(e) { setError(e.message); }
     finally { setLoading(false); }
+  }
+
+  function addEmailStep() {
+    setEmailSteps(prev => [...prev, { subject: '', body: '', delay_days: prev.length * 3, isReply: true }]);
+  }
+  function removeEmailStep(idx) {
+    setEmailSteps(prev => prev.filter((_, i) => i !== idx));
+  }
+  function updateStep(idx, field, val) {
+    setEmailSteps(prev => prev.map((s, i) => i === idx ? { ...s, [field]: val } : s));
   }
 
   // Step 7
@@ -633,7 +648,30 @@ export default function App() {
         {step===5 && (
           <Card>
             <h2 style={{ fontSize:22, fontWeight:700, marginBottom:6 }}>Upload leads</h2>
-            <p style={{ fontSize:14, color:T.textSub, marginBottom:24 }}>Campaigns are ready. Upload leads to each one.</p>
+            <p style={{ fontSize:14, color:T.textSub, marginBottom:24 }}>Campaigns are ready. Choose how to handle existing leads, then upload.</p>
+
+            {/* Duplicate mode selector */}
+            <div style={{ marginBottom:24 }}>
+              <label style={{ fontSize:13, fontWeight:600, color:T.textSub, display:'block', marginBottom:10 }}>
+                If a lead already exists in EmailBison…
+              </label>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:10 }}>
+                {[
+                  { val:'skip',    icon:'⏭', title:'Skip',    desc:'Keep existing data unchanged, still add to campaign' },
+                  { val:'update',  icon:'✏️', title:'Update',  desc:'Overwrite fields with new data from CSV' },
+                  { val:'replace', icon:'🔄', title:'Replace', desc:'Full replace — same as update via API' },
+                ].map(opt=>(
+                  <div key={opt.val} onClick={()=>setDuplicateMode(opt.val)}
+                    style={{ border:`2px solid ${duplicateMode===opt.val?T.green:T.border}`, borderRadius:12, padding:'14px 16px',
+                      cursor:'pointer', background:duplicateMode===opt.val?T.greenLight:T.surface, transition:'all .15s' }}>
+                    <div style={{ fontSize:18, marginBottom:6 }}>{opt.icon}</div>
+                    <div style={{ fontWeight:700, fontSize:13, color:duplicateMode===opt.val?T.green:T.text, marginBottom:4 }}>{opt.title}</div>
+                    <div style={{ fontSize:11, color:T.textMuted, lineHeight:1.4 }}>{opt.desc}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             <div style={{ display:'flex', flexDirection:'column', gap:8, marginBottom:16 }}>
               {created.map(c=>(
                 <div key={c.id} style={{ display:'flex', alignItems:'center', gap:12, padding:'14px 18px', background:T.surfaceAlt, borderRadius:12, border:`1px solid ${T.border}` }}>
@@ -657,29 +695,98 @@ export default function App() {
         {/* ── STEP 6 ────────────────────────────────────────────────────── */}
         {step===6 && (
           <Card>
-            <h2 style={{ fontSize:22, fontWeight:700, marginBottom:6 }}>Email copy</h2>
-            <p style={{ fontSize:14, color:T.textSub, marginBottom:20 }}>Paste your 3-email sequence. It will be applied to all campaigns identically.</p>
-            <Alert type="info" title="Format required">
-              <code style={{ fontSize:12 }}>--- EMAIL 1 ---{'\n'}Subject: ...{'\n\n'}body{'\n\n'}--- EMAIL 2 --- ...</code>
+            <h2 style={{ fontSize:22, fontWeight:700, marginBottom:4 }}>Email copy</h2>
+            <p style={{ fontSize:14, color:T.textSub, marginBottom:8 }}>
+              Enter your email sequence below. This is for your reference — you'll add the copy directly in EmailBison after this step.
+            </p>
+            <Alert type="warning">
+              <strong>Note:</strong> EmailBison's sequence builder is not available via API. After completing this tool, open each campaign in EmailBison and paste the copy shown here into the sequence builder manually.
             </Alert>
-            <Textarea
-              rows={16}
-              placeholder={"--- EMAIL 1 ---\nSubject: Quick question\n\nHi {first_name},\n\n[body]\n\n--- EMAIL 2 ---\nSubject: Re: Quick question\n\n[follow-up]\n\n--- EMAIL 3 ---\nSubject: Re: Quick question\n\n[final]"}
-              value={rawCopy}
-              onChange={e=>{setRawCopy(e.target.value);setParsedSteps(null);}}
-              style={{ margin:'16px 0 12px' }}
-            />
-            {parsedSteps && (
-              <Alert type="success" title={`${parsedSteps.length} steps parsed`}>
-                {parsedSteps.map((s,i)=>`Email ${i+1} (Day ${s.delay_days}): "${s.subject}"`).join(' · ')}
-              </Alert>
+
+            <div style={{ display:'flex', flexDirection:'column', gap:16, marginTop:8 }}>
+              {emailSteps.map((step, idx) => (
+                <div key={idx} style={{ border:`1.5px solid ${idx===0?T.border:T.greenBorder}`, borderRadius:14, overflow:'hidden' }}>
+                  {/* Step header */}
+                  <div style={{ display:'flex', alignItems:'center', gap:12, padding:'12px 18px',
+                    background: idx===0 ? T.surfaceAlt : T.greenLight,
+                    borderBottom:`1px solid ${idx===0?T.border:T.greenBorder}` }}>
+                    <div style={{ width:26, height:26, borderRadius:'50%', background:idx===0?T.indigo:T.green,
+                      color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:700, flexShrink:0 }}>
+                      {idx+1}
+                    </div>
+                    <span style={{ fontWeight:700, fontSize:14, color:T.text, flex:1 }}>
+                      {idx===0 ? 'Email 1 — Initial outreach' : `Follow-up ${idx} — Reply in same thread`}
+                    </span>
+                    {idx > 0 && (
+                      <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                        <label style={{ fontSize:12, color:T.textSub, fontWeight:500 }}>Send on day</label>
+                        <input
+                          type="number" min={1} max={30}
+                          value={step.delay_days}
+                          onChange={e => updateStep(idx, 'delay_days', parseInt(e.target.value)||1)}
+                          style={{ width:56, padding:'5px 8px', border:`1.5px solid ${T.border}`, borderRadius:8,
+                            fontSize:13, fontFamily:'inherit', textAlign:'center', outline:'none' }}
+                        />
+                        <button onClick={()=>removeEmailStep(idx)}
+                          style={{ background:'transparent', border:'none', cursor:'pointer', color:T.textMuted, fontSize:16, padding:'2px 4px' }}>✕</button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Subject */}
+                  <div style={{ padding:'14px 18px 0' }}>
+                    <label style={{ fontSize:11, fontWeight:600, color:T.textMuted, textTransform:'uppercase', letterSpacing:'0.05em', display:'block', marginBottom:6 }}>
+                      Subject line{idx > 0 ? ' (usually "Re: [original subject]")' : ''}
+                    </label>
+                    <input
+                      type="text"
+                      placeholder={idx===0 ? 'e.g. Quick question about {company}' : 'e.g. Re: Quick question about {company}'}
+                      value={step.subject}
+                      onChange={e => updateStep(idx, 'subject', e.target.value)}
+                      style={{ width:'100%', padding:'9px 12px', border:`1.5px solid ${T.border}`, borderRadius:9,
+                        fontSize:14, fontFamily:'inherit', color:T.text, background:T.surface, outline:'none' }}
+                    />
+                  </div>
+
+                  {/* Body */}
+                  <div style={{ padding:'12px 18px 18px' }}>
+                    <label style={{ fontSize:11, fontWeight:600, color:T.textMuted, textTransform:'uppercase', letterSpacing:'0.05em', display:'block', marginBottom:6 }}>
+                      Email body
+                    </label>
+                    <textarea
+                      rows={7}
+                      placeholder={idx===0
+                        ? 'Hi {first_name},
+
+[your opening email body here]
+
+Best,
+[Your name]'
+                        : '[follow-up body — this sends as a reply in the same thread]'}
+                      value={step.body}
+                      onChange={e => updateStep(idx, 'body', e.target.value)}
+                      style={{ width:'100%', padding:'10px 12px', border:`1.5px solid ${T.border}`, borderRadius:9,
+                        fontSize:13, fontFamily:'ui-monospace,SFMono-Regular,Menlo,monospace', color:T.text,
+                        background:T.surface, outline:'none', resize:'vertical', lineHeight:1.7 }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Add follow-up button */}
+            {emailSteps.length < 5 && (
+              <button onClick={addEmailStep}
+                style={{ marginTop:12, width:'100%', padding:'11px', border:`2px dashed ${T.greenBorder}`,
+                  borderRadius:12, background:'transparent', cursor:'pointer', fontSize:13,
+                  color:T.green, fontWeight:600, fontFamily:'inherit', transition:'all .15s' }}>
+                + Add follow-up email
+              </button>
             )}
-            <div style={{ display:'flex', gap:10, marginTop:4 }}>
-              <Btn variant="ghost" onClick={()=>{ clearErr(); const s=parseEmailCopy(rawCopy); if(!s.length||!s[0].subject){setError('Could not parse. Use --- EMAIL 1 --- format.');return;} setParsedSteps(s); }}>
-                Preview Parse
-              </Btn>
-              <Btn onClick={applyCopy} disabled={loading||!parsedSteps}>
-                {loading ? <><Spinner color="#fff" /> &nbsp;Applying...</> : 'Apply to All Campaigns →'}
+
+            <div style={{ marginTop:20 }}>
+              <Btn onClick={proceedFromCopy} disabled={loading}>
+                {loading ? <><Spinner color="#fff" /> &nbsp;Loading senders...</> : 'Continue to Sender Selection →'}
               </Btn>
             </div>
           </Card>
