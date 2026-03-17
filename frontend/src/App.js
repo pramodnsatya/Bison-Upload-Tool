@@ -398,7 +398,9 @@ export default function App() {
       setStep(6);
     } catch(e) { setError(e.message); }
     finally { setLoading(false); }
-  // Step 7
+  }
+
+  // Step 6: Assign senders
   async function assignSenders() {
     setLoading(true); clearErr();
     try {
