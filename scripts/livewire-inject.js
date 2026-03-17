@@ -35,19 +35,32 @@ function prompt(q) {
 
 // ─── Open Chrome with existing session ────────────────────────────────────────
 async function openChrome(headless = false) {
-  const userDataDir = process.env.HOME + '/Library/Application Support/Google/Chrome';
-  try {
-    return await chromium.launchPersistentContext(userDataDir, {
-      headless,
-      channel: 'chrome',
-      timeout: 15000,
-      args: ['--disable-blink-features=AutomationControlled'],
-    });
-  } catch (_) {
-    // Chrome may already be open — try without persistent context
-    const browser = await chromium.launch({ headless, channel: 'chrome' });
-    return await browser.newContext();
+  // Try 1: Real Chrome persistent context (keeps you logged in)
+  const chromePaths = [
+    process.env.HOME + '/Library/Application Support/Google/Chrome',
+    process.env.HOME + '/Library/Application Support/Google/Chrome Beta',
+    process.env.HOME + '/Library/Application Support/Chromium',
+  ];
+  for (const userDataDir of chromePaths) {
+    try {
+      const ctx = await chromium.launchPersistentContext(userDataDir, {
+        headless, channel: 'chrome', timeout: 10000,
+        args: ['--disable-blink-features=AutomationControlled'],
+      });
+      console.log('  \x1b[32m✓\x1b[0m Using your existing Chrome session');
+      return ctx;
+    } catch (_) {}
   }
+  // Try 2: Chrome without persistent context
+  try {
+    const browser = await chromium.launch({ headless, channel: 'chrome', timeout: 10000 });
+    console.log('  \x1b[33m⚠\x1b[0m Using Chrome (fresh session — you may need to log in)');
+    return await browser.newContext();
+  } catch (_) {}
+  // Try 3: Playwright bundled Chromium — must log in manually
+  console.log('  \x1b[33m⚠\x1b[0m Chrome not found — using Playwright Chromium. Log in to EmailBison when the browser opens.');
+  const browser = await chromium.launch({ headless: false, timeout: 30000 });
+  return await browser.newContext();
 }
 
 // ─── CAPTURE MODE: Record what Livewire sends when saving a sequence step ─────
