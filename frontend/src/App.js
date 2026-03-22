@@ -304,6 +304,8 @@ export default function App() {
   const [created,      setCreated]      = useState([]);
 
   const [duplicateMode, setDuplicateMode] = useState('skip');
+  const [planMode, setPlanMode] = useState('auto'); // 'auto' | 'manual'
+  const [manualRows, setManualRows] = useState([]); // [{type, name, count}]
 
   // Email copy steps
   const [emailSteps, setEmailSteps] = useState([
@@ -355,10 +357,48 @@ export default function App() {
 
   // Step 3
   function confirmPlan() {
-    if (!numCampaigns || !campaignBase.trim()) { setError('Enter a campaign name and select the number of campaigns.'); return; }
+    if (!campaignBase.trim()) { setError('Enter a campaign name.'); return; }
     clearErr();
-    setCampaignPlan(buildCampaignPlan(campaignBase.trim(), counts, segments, numCampaigns));
+
+    if (planMode === 'manual') {
+      if (!manualRows.length) { setError('Add at least one campaign row.'); return; }
+      // Build plan from manual rows — slice leads from the appropriate segment pool
+      const pools = {
+        google:  [...(segments?.google || [])],
+        outlook: [...(segments?.outlook || [])],
+        seg:     [...(segments?.seg || [])],
+      };
+      const usedCounts = { google: 0, outlook: 0, seg: 0 };
+      const plan = manualRows.map(row => {
+        const type = row.type; // 'google' | 'outlook' | 'seg'
+        const pool = pools[type] || [];
+        const start = usedCounts[type] || 0;
+        const count = Math.min(parseInt(row.count) || pool.length, pool.length - start);
+        usedCounts[type] = (usedCounts[type] || 0) + count;
+        const leads = pool.slice(start, start + count);
+        return {
+          type,
+          name: `${campaignBase.trim()}_${row.suffix || (type + '_' + (usedCounts[type] > count ? usedCounts[type] : ''))}`,
+          leads,
+          senderType: type === 'outlook' ? 'outlook' : 'google',
+        };
+      }).filter(p => p.leads.length > 0);
+      setCampaignPlan(plan);
+    } else {
+      if (!numCampaigns) { setError('Select the number of campaigns.'); return; }
+      setCampaignPlan(buildCampaignPlan(campaignBase.trim(), counts, segments, numCampaigns));
+    }
     setStep(4);
+  }
+
+  function addManualRow() {
+    setManualRows(prev => [...prev, { type: 'google', count: '', suffix: '' }]);
+  }
+  function updateManualRow(i, field, val) {
+    setManualRows(prev => prev.map((r, j) => j === i ? { ...r, [field]: val } : r));
+  }
+  function removeManualRow(i) {
+    setManualRows(prev => prev.filter((_, j) => j !== i));
   }
 
   // Step 4
@@ -452,6 +492,7 @@ export default function App() {
     setAllSenders([]); setSelSenders({}); setLog([]); clearErr();
     setCopyApplied(false);
     setEmailSteps([{subject:'',body:'',delay_days:0},{subject:'',body:'',delay_days:3},{subject:'',body:'',delay_days:6}]);
+    setPlanMode('auto'); setManualRows([]);
   }
 
   const clientName = clients.find(c=>c.id===clientId)?.name || '';
@@ -603,42 +644,148 @@ export default function App() {
               </div>
 
               <h2 style={{ fontSize:18, fontWeight:700, marginBottom:4 }}>Configure campaigns</h2>
-              <p style={{ fontSize:14, color:T.textSub, marginBottom:20 }}>Name your campaign set and choose how many campaigns to create.</p>
+              <p style={{ fontSize:14, color:T.textSub, marginBottom:20 }}>Name your campaign set and choose how to split leads.</p>
 
-              <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+              <div style={{ display:'flex', flexDirection:'column', gap:20 }}>
                 <Input label="Campaign base name" placeholder="e.g. Acme_Q2_2024 → creates _google, _outlook, _seg" value={campaignBase} onChange={e=>setCampaignBase(e.target.value)} />
 
+                {/* Mode toggle */}
                 <div>
-                  <label style={{ display:'block', fontSize:13, fontWeight:500, color:T.textSub, marginBottom:10 }}>Number of campaigns</label>
-                  <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:10 }}>
-                    {[1,2,3].map(n => {
-                      const preview = buildCampaignPlan(campaignBase||'NAME', counts, segments||{google:[],outlook:[],seg:[]}, n);
-                      const active = numCampaigns===n;
-                      return (
-                        <div key={n} onClick={()=>setNumCampaigns(n)}
-                          style={{ border:`2px solid ${active?T.indigo:T.border}`, borderRadius:12, padding:16, cursor:'pointer',
-                            background:active?T.indigoLight:T.surface, transition:'all .15s' }}>
-                          <div style={{ fontWeight:700, fontSize:16, color:active?T.indigo:T.text, marginBottom:10 }}>
-                            {n} Campaign{n>1?'s':''}
-                          </div>
-                          {preview.map(p=>(
-                            <div key={p.name} style={{ display:'flex', alignItems:'center', gap:6, marginBottom:5 }}>
-                              <div style={{ width:6, height:6, borderRadius:'50%', background:(T[p.type]||T.seg).dot, flexShrink:0 }} />
-                              <span style={{ fontSize:12, color:T.textSub, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                                {campaignBase ? p.name : `NAME_${p.type}`}
-                              </span>
-                              <span style={{ fontSize:11, color:T.textMuted, marginLeft:'auto', flexShrink:0 }}>
-                                {p.leads?.length ?? '?'}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })}
+                  <label style={{ display:'block', fontSize:13, fontWeight:500, color:T.textSub, marginBottom:10 }}>Campaign split</label>
+                  <div style={{ display:'flex', gap:8, marginBottom:16 }}>
+                    {[['auto','⚡ Auto suggestions'],['manual','✏️ Manual allocation']].map(([mode, label])=>(
+                      <button key={mode} onClick={()=>{ setPlanMode(mode); if(mode==='manual'&&!manualRows.length) addManualRow(); }}
+                        style={{ padding:'8px 18px', borderRadius:10, border:`2px solid ${planMode===mode?T.indigo:T.border}`,
+                          background:planMode===mode?T.indigoLight:T.surface, color:planMode===mode?T.indigo:T.textSub,
+                          fontWeight:planMode===mode?600:400, fontSize:13, cursor:'pointer', fontFamily:'inherit', transition:'all .15s' }}>
+                        {label}
+                      </button>
+                    ))}
                   </div>
+
+                  {/* AUTO mode */}
+                  {planMode==='auto' && (
+                    <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:10 }}>
+                      {[1,2,3].map(n => {
+                        const preview = buildCampaignPlan(campaignBase||'NAME', counts, segments||{google:[],outlook:[],seg:[]}, n);
+                        const active = numCampaigns===n;
+                        return (
+                          <div key={n} onClick={()=>setNumCampaigns(n)}
+                            style={{ border:`2px solid ${active?T.indigo:T.border}`, borderRadius:12, padding:16, cursor:'pointer',
+                              background:active?T.indigoLight:T.surface, transition:'all .15s' }}>
+                            <div style={{ fontWeight:700, fontSize:16, color:active?T.indigo:T.text, marginBottom:10 }}>
+                              {n} Campaign{n>1?'s':''}
+                            </div>
+                            {preview.map(p=>(
+                              <div key={p.name} style={{ display:'flex', alignItems:'center', gap:6, marginBottom:5 }}>
+                                <div style={{ width:6, height:6, borderRadius:'50%', background:(T[p.type]||T.seg).dot, flexShrink:0 }} />
+                                <span style={{ fontSize:12, color:T.textSub, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                                  {campaignBase ? p.name : `NAME_${p.type}`}
+                                </span>
+                                <span style={{ fontSize:11, color:T.textMuted, marginLeft:'auto', flexShrink:0 }}>
+                                  {p.leads?.length ?? '?'}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* MANUAL mode */}
+                  {planMode==='manual' && (
+                    <div>
+                      {/* Available pool summary */}
+                      <div style={{ display:'flex', gap:10, marginBottom:14, flexWrap:'wrap' }}>
+                        {[
+                          { type:'google',  label:'Google',  avail: counts.google },
+                          { type:'outlook', label:'Outlook', avail: counts.outlook },
+                          { type:'seg',     label:'SEG',     avail: (counts.seg||0)+(counts.mimecast||0) },
+                        ].map(({type,label,avail})=>(
+                          <div key={type} style={{ display:'flex', alignItems:'center', gap:6, padding:'5px 12px',
+                            background:T.surfaceAlt, borderRadius:8, border:`1px solid ${T.border}` }}>
+                            <Pill type={type}>{label}</Pill>
+                            <span style={{ fontSize:12, color:T.textSub }}>{avail} available</span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Campaign rows */}
+                      <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                        {manualRows.map((row, i) => {
+                          const typeAvail = { google: counts.google, outlook: counts.outlook, seg: (counts.seg||0)+(counts.mimecast||0) };
+                          const usedBefore = manualRows.slice(0, i).filter(r=>r.type===row.type).reduce((s,r)=>s+(parseInt(r.count)||0),0);
+                          const remaining = (typeAvail[row.type]||0) - usedBefore;
+                          const autoName = campaignBase ? `${campaignBase}_${row.type}${manualRows.filter((r,j)=>j<=i&&r.type===row.type).length > 1 ? '_'+manualRows.filter((r,j)=>j<=i&&r.type===row.type).length : ''}` : `NAME_${row.type}`;
+
+                          return (
+                            <div key={i} style={{ display:'grid', gridTemplateColumns:'140px 1fr 130px 36px', gap:8, alignItems:'center',
+                              padding:'12px 14px', background:T.surfaceAlt, borderRadius:10, border:`1px solid ${T.border}` }}>
+                              {/* Type selector */}
+                              <select value={row.type} onChange={e=>updateManualRow(i,'type',e.target.value)}
+                                style={{ padding:'7px 10px', border:`1.5px solid ${T.border}`, borderRadius:8, fontSize:13,
+                                  fontFamily:'inherit', background:T.surface, outline:'none', cursor:'pointer' }}>
+                                <option value="google">Google</option>
+                                <option value="outlook">Outlook</option>
+                                <option value="seg">SEG</option>
+                              </select>
+
+                              {/* Campaign name preview */}
+                              <div style={{ fontSize:12, color:T.textSub, fontFamily:'monospace', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                                {autoName}
+                              </div>
+
+                              {/* Lead count input */}
+                              <div style={{ position:'relative' }}>
+                                <input type="number" min={1} max={remaining}
+                                  value={row.count}
+                                  onChange={e=>updateManualRow(i,'count',e.target.value)}
+                                  placeholder={`max ${remaining}`}
+                                  style={{ width:'100%', padding:'7px 10px', border:`1.5px solid ${parseInt(row.count)>remaining?T.error:T.border}`,
+                                    borderRadius:8, fontSize:13, fontFamily:'inherit', outline:'none', background:T.surface }} />
+                                {remaining < (typeAvail[row.type]||0) && (
+                                  <div style={{ fontSize:10, color:T.textMuted, marginTop:2 }}>{remaining} left</div>
+                                )}
+                              </div>
+
+                              {/* Remove */}
+                              <button onClick={()=>removeManualRow(i)}
+                                style={{ width:32, height:32, border:`1px solid ${T.border}`, borderRadius:8, background:T.surface,
+                                  cursor:'pointer', fontSize:16, color:T.textMuted, display:'flex', alignItems:'center', justifyContent:'center' }}>
+                                ×
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Add row button */}
+                      <button onClick={addManualRow}
+                        style={{ marginTop:10, width:'100%', padding:'10px', border:`2px dashed ${T.border}`,
+                          borderRadius:10, background:'transparent', cursor:'pointer', fontSize:13,
+                          color:T.textSub, fontWeight:600, fontFamily:'inherit', display:'flex', alignItems:'center', justifyContent:'center', gap:6 }}>
+                        <span style={{ fontSize:18, lineHeight:1 }}>+</span> Add campaign
+                      </button>
+
+                      {/* Total check */}
+                      {manualRows.length > 0 && (
+                        <div style={{ marginTop:12, fontSize:12, color:T.textMuted }}>
+                          {['google','outlook','seg'].map(type => {
+                            const allocated = manualRows.filter(r=>r.type===type).reduce((s,r)=>s+(parseInt(r.count)||0),0);
+                            const avail = type==='seg'?(counts.seg||0)+(counts.mimecast||0):(counts[type]||0);
+                            if (!avail) return null;
+                            return <span key={type} style={{ marginRight:16, color: allocated>avail?T.error:allocated<avail?T.warning:T.success }}>
+                              {type}: {allocated}/{avail} allocated{allocated<avail?` (${avail-allocated} unallocated)`:''}
+                            </span>;
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
-                <Btn onClick={confirmPlan} disabled={!numCampaigns||!campaignBase.trim()} size="lg">
+                <Btn onClick={confirmPlan} disabled={planMode==='auto'?(!numCampaigns||!campaignBase.trim()):!campaignBase.trim()} size="lg">
                   Confirm Plan →
                 </Btn>
               </div>

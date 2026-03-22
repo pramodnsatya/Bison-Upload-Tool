@@ -254,19 +254,30 @@ app.delete('/templates/:id', (req, res) => {
 });
 
 // Fetch sequence steps from an existing EmailBison campaign
+// Try both URL patterns — support docs use /{id}/sequence-steps, public docs use ?campaign_id=
 app.get('/clients/:id/campaigns/:cid/sequence', async (req, res) => {
-  try {
-    const data = await eb(req.params.id, `/api/campaigns/sequence-steps?campaign_id=${req.params.cid}&per_page=20`);
-    const steps = (Array.isArray(data) ? data : (data.data || [])).map(s => ({
-      id:          s.id,
-      subject:     s.subject || '',
-      body:        s.body || s.content || '',
-      delay_days:  s.delay_days ?? s.delay ?? 0,
-      is_reply:    s.reply_to_thread ?? s.is_reply ?? false,
-      order:       s.order ?? s.position ?? 0,
+  const normalise = raw => {
+    const arr = Array.isArray(raw) ? raw : (raw.data || raw.sequence_steps || []);
+    return arr.map(s => ({
+      id:         s.id,
+      subject:    s.subject || s.email_subject || '',
+      body:       s.body || s.email_body || s.content || '',
+      delay_days: s.delay_days ?? s.wait_in_days ?? s.delay ?? 0,
+      is_reply:   s.reply_to_thread ?? s.is_reply ?? false,
+      order:      s.order ?? s.position ?? 0,
     })).sort((a, b) => a.order - b.order);
-    res.json(steps);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  };
+  try {
+    // Try primary: /api/campaigns/{id}/sequence-steps
+    const data = await eb(req.params.id, `/api/campaigns/${req.params.cid}/sequence-steps?per_page=20`);
+    res.json(normalise(data));
+  } catch (_) {
+    try {
+      // Fallback: /api/campaigns/sequence-steps?campaign_id=
+      const data = await eb(req.params.id, `/api/campaigns/sequence-steps?campaign_id=${req.params.cid}&per_page=20`);
+      res.json(normalise(data));
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  }
 });
 
 // List/search campaigns (used for template library dropdown)
@@ -285,29 +296,7 @@ app.get('/clients/:id/campaigns/search', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Apply sequence steps to a campaign (attempt undocumented create endpoint)
-app.post('/clients/:id/campaigns/:cid/sequence', async (req, res) => {
-  const { steps } = req.body;
-  const results = { applied: 0, failed: 0, apiSupported: false };
-  for (let i = 0; i < steps.length; i++) {
-    const s = steps[i];
-    try {
-      await eb(req.params.id, '/api/campaigns/sequence-steps', 'POST', {
-        campaign_id: parseInt(req.params.cid),
-        subject: s.subject,
-        body: s.body,
-        delay_days: i === 0 ? 0 : (s.delay_days ?? i * 3),
-        reply_to_thread: i > 0,
-        order: i + 1,
-      });
-      results.applied++;
-      results.apiSupported = true;
-    } catch (_) {
-      results.failed++;
-    }
-  }
-  res.json({ ok: true, ...results });
-});
+
 
 // ── Serve React build (production / Railway) ──────────────────────────────────
 const buildPath = join(__dirname, '../frontend/build');
