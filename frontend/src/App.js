@@ -315,6 +315,7 @@ export default function App() {
 
   const [allSenders,   setAllSenders]   = useState([]);
   const [selSenders,   setSelSenders]   = useState({});
+  const [senderFilters, setSenderFilters] = useState({}); // per campaign: {provider:'all'|'google'|'outlook', search:''}
 
   useEffect(()=>{ api('/clients').then(setClients).catch(()=>{}); },[]);
 
@@ -959,67 +960,139 @@ export default function App() {
         {step===7 && (
           <div style={{ display:'flex', flexDirection:'column', gap:20 }}>
             <div>
-              <h2 style={{ fontSize:22, fontWeight:700, marginBottom:4 }}>Select senders</h2>
-              <p style={{ fontSize:14, color:T.textSub }}>★ = auto-recommended. Ranked by warmup score (high → low), then lifetime total sent (low → high).</p>
+              <h2 style={{ fontSize:22, fontWeight:700, marginBottom:4 }}>Select sender emails</h2>
+              <p style={{ fontSize:14, color:T.textSub }}>
+                Select senders for each campaign. ★ = auto-recommended based on warmup score and lifetime sent.
+                Senders marked <span style={{ color:'#F59E0B', fontWeight:600 }}>● Active</span> are already assigned to a running campaign.
+              </p>
             </div>
 
-            {created.map(camp=>{
-              const pool = allSenders.filter(camp.senderType==='outlook'?isOutlookSender:isGoogleSender).sort((a,b)=>{
-                const sa=a.warmup_score??a.reputation_score??0, sb=b.warmup_score??b.reputation_score??0;
-                return sb!==sa?sb-sa:(a.total_sent??0)-(b.total_sent??0);
-              });
+            {created.map(camp => {
+              const filt = senderFilters[camp.name] || { provider: 'all', search: '' };
+              const setFilt = (f) => setSenderFilters(prev => ({ ...prev, [camp.name]: { ...filt, ...f } }));
+
+              // Base pool — all senders for this campaign's type
+              const basePool = allSenders
+                .filter(s => camp.senderType === 'outlook' ? s.provider === 'outlook' : s.provider === 'google')
+                .sort((a,b) => {
+                  const sa = a.warmup_score ?? 0, sb = b.warmup_score ?? 0;
+                  return sb !== sa ? sb - sa : (a.total_sent ?? 0) - (b.total_sent ?? 0);
+                });
+
+              // Apply filters
+              const pool = basePool
+                .filter(s => filt.provider === 'all' || s.provider === filt.provider)
+                .filter(s => !filt.search || s.email.toLowerCase().includes(filt.search.toLowerCase()));
+
               const needed = calcNeeded(camp.leads.length, camp.senderType);
-              const sel = selSenders[camp.name]||new Set();
-              const toggle = id => setSelSenders(prev=>{ const s=new Set(prev[camp.name]); s.has(id)?s.delete(id):s.add(id); return{...prev,[camp.name]:s}; });
-              const enough = sel.size >= needed;
+              const sel = selSenders[camp.name] || new Set();
+              const toggle = id => setSelSenders(prev => {
+                const s = new Set(prev[camp.name]); s.has(id) ? s.delete(id) : s.add(id);
+                return { ...prev, [camp.name]: s };
+              });
+              const selAll  = () => setSelSenders(prev => ({ ...prev, [camp.name]: new Set(pool.map(s=>s.id)) }));
+              const selNone = () => setSelSenders(prev => ({ ...prev, [camp.name]: new Set() }));
+              const enough  = sel.size >= needed;
 
               return (
                 <Card key={camp.name}>
+                  {/* Campaign header */}
                   <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:16, flexWrap:'wrap' }}>
-                    <Pill type={camp.type}>{camp.type==='google_seg'?'Google+SEG':camp.type}</Pill>
-                    <span style={{ fontWeight:600, fontSize:15 }}>{camp.name}</span>
-                    <span style={{ fontSize:13, color:T.textSub }}>{camp.leads.length} leads ÷ {camp.senderType==='outlook'?5:15}/day = {needed} needed</span>
-                    <span style={{ marginLeft:'auto', fontSize:13, fontWeight:600, color:enough?T.success:T.warning }}>
+                    <Pill type={camp.type}>{camp.type==='google_seg'?'Google+SEG':(camp.type||'').toUpperCase()}</Pill>
+                    <span style={{ fontWeight:700, fontSize:15 }}>{camp.name}</span>
+                    <span style={{ fontSize:13, color:T.textSub }}>
+                      {camp.leads.length} leads ÷ {camp.senderType==='outlook'?5:15}/day =
+                      <strong> {needed} senders needed</strong>
+                    </span>
+                    <span style={{ marginLeft:'auto', fontSize:13, fontWeight:700,
+                      color: sel.size===0?T.textMuted : enough?T.success:T.warning }}>
                       {sel.size} / {needed} selected
                     </span>
                   </div>
 
+                  {/* Filters row */}
+                  <div style={{ display:'flex', gap:8, marginBottom:12, flexWrap:'wrap', alignItems:'center' }}>
+                    {/* Provider filter */}
+                    {[['all','All'],['google','Google'],['outlook','Outlook']].map(([v,l])=>(
+                      <button key={v} onClick={()=>setFilt({provider:v})}
+                        style={{ padding:'5px 12px', borderRadius:8, border:`1.5px solid ${filt.provider===v?T.indigo:T.border}`,
+                          background:filt.provider===v?T.indigoLight:T.surface, color:filt.provider===v?T.indigo:T.textSub,
+                          fontSize:12, fontWeight:filt.provider===v?600:400, cursor:'pointer', fontFamily:'inherit' }}>
+                        {l}
+                      </button>
+                    ))}
+                    {/* Search */}
+                    <input placeholder="Search email..." value={filt.search} onChange={e=>setFilt({search:e.target.value})}
+                      style={{ padding:'5px 12px', border:`1.5px solid ${T.border}`, borderRadius:8, fontSize:12,
+                        fontFamily:'inherit', outline:'none', background:T.surface, minWidth:180 }} />
+                    {/* Select all / none */}
+                    <div style={{ marginLeft:'auto', display:'flex', gap:6 }}>
+                      <button onClick={selAll}  style={{ padding:'5px 10px', borderRadius:7, border:`1px solid ${T.border}`, background:T.surface, cursor:'pointer', fontSize:11, color:T.textSub, fontFamily:'inherit' }}>All</button>
+                      <button onClick={selNone} style={{ padding:'5px 10px', borderRadius:7, border:`1px solid ${T.border}`, background:T.surface, cursor:'pointer', fontSize:11, color:T.textSub, fontFamily:'inherit' }}>None</button>
+                    </div>
+                  </div>
+
                   {pool.length===0
-                    ? <Alert type="warning">No {camp.senderType} senders found in this client's EmailBison account.</Alert>
+                    ? <Alert type="warning">No {camp.senderType} senders found matching your filters.</Alert>
                     : (
                       <div style={{ border:`1px solid ${T.border}`, borderRadius:10, overflow:'hidden' }}>
                         <table>
-                          <thead><tr>
-                            <th style={{ width:40 }}></th>
-                            <th>Email</th>
-                            <th>Warmup Score</th>
-                            <th>Total Sent (lifetime)</th>
-                            <th>Status</th>
-                          </tr></thead>
+                          <thead>
+                            <tr>
+                              <th style={{width:36}}></th>
+                              <th>Email</th>
+                              <th>Provider</th>
+                              <th>Warmup Score</th>
+                              <th>Warmup Sent</th>
+                              <th>Total Sent</th>
+                              <th>Status</th>
+                              <th>In Campaign</th>
+                            </tr>
+                          </thead>
                           <tbody>
-                            {pool.map((s,idx)=>{
-                              const checked=sel.has(s.id);
-                              const score=s.warmup_score??s.reputation_score;
-                              const scoreColor = score==null?T.textMuted:score>=80?T.success:score>=50?T.warning:T.error;
+                            {pool.map((s, idx) => {
+                              const checked = sel.has(s.id);
+                              const score = s.warmup_score;
+                              const scoreColor = score==null ? T.textMuted : score>=80 ? T.success : score>=50 ? T.warning : T.error;
+                              const isRec = idx < needed;
                               return (
-                                <tr key={s.id} style={{ opacity:checked?1:0.45, cursor:'pointer' }} onClick={()=>toggle(s.id)}>
+                                <tr key={s.id} onClick={()=>toggle(s.id)}
+                                  style={{ cursor:'pointer', opacity: checked?1:0.5, transition:'opacity .1s',
+                                    background: checked ? (s.provider==='google'?'#F0F7FF':'#FFF8F0') : 'transparent' }}>
                                   <td>
-                                    <div style={{ width:18, height:18, borderRadius:5, border:`2px solid ${checked?T.indigo:T.border}`, background:checked?T.indigo:'transparent', display:'flex', alignItems:'center', justifyContent:'center' }}>
-                                      {checked && <span style={{ color:'#fff', fontSize:11, fontWeight:700 }}>✓</span>}
+                                    <div style={{ width:18, height:18, borderRadius:5, flexShrink:0,
+                                      border:`2px solid ${checked?T.indigo:T.border}`,
+                                      background:checked?T.indigo:'transparent',
+                                      display:'flex', alignItems:'center', justifyContent:'center' }}>
+                                      {checked && <span style={{color:'#fff',fontSize:10,fontWeight:700}}>✓</span>}
                                     </div>
                                   </td>
                                   <td>
-                                    {s.email}
-                                    {idx<needed && <span style={{ marginLeft:6, fontSize:11, color:T.success, fontWeight:700 }}>★</span>}
+                                    <span style={{fontSize:13, fontWeight:checked?600:400}}>{s.email}</span>
+                                    {isRec && <span style={{marginLeft:6,fontSize:10,color:T.success,fontWeight:700}}>★ rec</span>}
                                   </td>
-                                  <td style={{ fontWeight:600, color:scoreColor }}>{score??'—'}</td>
-                                  <td style={{ color:T.textSub }}>{(s.total_sent??s.emails_sent??0).toLocaleString()}</td>
                                   <td>
-                                    <span style={{ display:'inline-block', padding:'2px 8px', borderRadius:999, fontSize:11, fontWeight:600,
-                                      background:(!s.status||s.status==='active')?'#ECFDF5':'#FEF2F2',
-                                      color:(!s.status||s.status==='active')?T.success:T.error }}>
+                                    <span style={{ fontSize:11, fontWeight:600, padding:'2px 7px', borderRadius:5,
+                                      background: s.provider==='google'?'#EFF6FF':s.provider==='outlook'?'#FFF7ED':'#F3F4F6',
+                                      color: s.provider==='google'?T.indigo:s.provider==='outlook'?'#C2410C':'#6B7280' }}>
+                                      {s.provider==='google'?'Google':s.provider==='outlook'?'Outlook':'Other'}
+                                    </span>
+                                  </td>
+                                  <td style={{fontWeight:600, color:scoreColor}}>{score??'—'}</td>
+                                  <td style={{color:T.textSub}}>{s.warmup_sent!=null ? s.warmup_sent.toLocaleString() : '—'}</td>
+                                  <td style={{color:T.textSub}}>{s.total_sent!=null ? s.total_sent.toLocaleString() : '—'}</td>
+                                  <td>
+                                    <span style={{ fontSize:11, fontWeight:600, padding:'2px 8px', borderRadius:999,
+                                      background:s.status==='active'?'#ECFDF5':'#FEF2F2',
+                                      color:s.status==='active'?T.success:T.error }}>
                                       {s.status||'active'}
                                     </span>
+                                  </td>
+                                  <td>
+                                    {s.active_campaigns
+                                      ? <span style={{fontSize:11,fontWeight:600,color:'#D97706',background:'#FEF3C7',padding:'2px 8px',borderRadius:999}}>● Active</span>
+                                      : <span style={{fontSize:11,color:T.textMuted}}>—</span>
+                                    }
                                   </td>
                                 </tr>
                               );

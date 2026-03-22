@@ -93,8 +93,61 @@ app.post('/map-and-segment', (req, res) => {
 });
 
 app.get('/clients/:id/sender-emails', async (req, res) => {
-  try { const d = await eb(req.params.id, '/api/sender-emails?per_page=200'); res.json(Array.isArray(d) ? d : (d.data || [])); }
-  catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    // Fetch base sender emails
+    const base = await eb(req.params.id, '/api/sender-emails?per_page=200');
+    const senders = Array.isArray(base) ? base : (base.data || []);
+
+    // Fetch warmup data and merge
+    let warmupMap = {};
+    try {
+      const w = await eb(req.params.id, '/api/warmup/sender-emails?per_page=200');
+      const warmupArr = Array.isArray(w) ? w : (w.data || []);
+      warmupArr.forEach(ws => { warmupMap[ws.sender_email_id ?? ws.id] = ws; });
+    } catch (_) {}
+
+    // Fetch active campaigns to know which senders are already in use
+    let activeCampaignSenders = new Set();
+    try {
+      const camps = await eb(req.params.id, '/api/campaigns?per_page=200&status=active');
+      const campArr = Array.isArray(camps) ? camps : (camps.data || []);
+      campArr.forEach(c => {
+        const ids = c.sender_email_ids || c.sender_emails?.map(s => s.id) || [];
+        ids.forEach(id => activeCampaignSenders.add(String(id)));
+      });
+    } catch (_) {}
+
+    const enriched = senders.map(s => {
+      const wu = warmupMap[s.id] || {};
+      // Detect provider from email domain / smtp_host
+      const email = (s.email || '').toLowerCase();
+      const smtp  = (s.smtp_host || s.host || '').toLowerCase();
+      let provider = 'other';
+      if (smtp.includes('google') || smtp.includes('gmail') || email.endsWith('@gmail.com')) provider = 'google';
+      else if (smtp.includes('outlook') || smtp.includes('microsoft') || smtp.includes('office365') || smtp.includes('hotmail')) provider = 'outlook';
+      else if (s.email_provider) {
+        const p = s.email_provider.toLowerCase();
+        if (p.includes('google') || p.includes('gmail')) provider = 'google';
+        else if (p.includes('microsoft') || p.includes('outlook')) provider = 'outlook';
+      }
+
+      return {
+        id:               s.id,
+        email:            s.email,
+        provider,
+        status:           s.status || 'active',
+        warmup_enabled:   wu.warmup_enabled ?? s.warmup_enabled ?? false,
+        warmup_score:     wu.score ?? wu.warmup_score ?? s.warmup_score ?? null,
+        warmup_sent:      wu.total_warmup_sent ?? wu.warmup_emails_sent ?? null,
+        total_sent:       s.total_sent ?? s.emails_sent ?? null,
+        active_campaigns: activeCampaignSenders.has(String(s.id)),
+        daily_limit:      s.daily_limit ?? s.max_daily_sends ?? null,
+        raw:              s,
+      };
+    });
+
+    res.json(enriched);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/clients/:id/campaigns', async (req, res) => {
