@@ -376,16 +376,29 @@ export default function App() {
         seg:     [...(segments?.seg || [])],
       };
       const usedCounts = { google: 0, outlook: 0, seg: 0 };
+      // Count how many times each type appears total — to decide if we need _1, _2 suffixes
+      const typeTotals = { google: 0, outlook: 0, seg: 0 };
+      manualRows.forEach(r => { typeTotals[r.type] = (typeTotals[r.type] || 0) + 1; });
+      const typeIndex = { google: 0, outlook: 0, seg: 0 };
+
       const plan = manualRows.map(row => {
-        const type = row.type; // 'google' | 'outlook' | 'seg'
+        const type = row.type;
         const pool = pools[type] || [];
         const start = usedCounts[type] || 0;
         const count = Math.min(parseInt(row.count) || pool.length, pool.length - start);
         usedCounts[type] = (usedCounts[type] || 0) + count;
+        typeIndex[type] = (typeIndex[type] || 0) + 1;
         const leads = pool.slice(start, start + count);
+
+        // If this type appears more than once, append _1, _2 etc.
+        // If only once, just use the type name (e.g. _google, _outlook)
+        const suffix = typeTotals[type] > 1
+          ? `${type}_${typeIndex[type]}`
+          : type;
+
         return {
           type,
-          name: `${campaignBase.trim()}_${row.suffix || (type + '_' + (usedCounts[type] > count ? usedCounts[type] : ''))}`,
+          name: `${campaignBase.trim()}_${suffix}`,
           leads,
           senderType: type === 'outlook' ? 'outlook' : 'google',
         };
@@ -729,7 +742,10 @@ export default function App() {
                           const typeAvail = { google: counts.google, outlook: counts.outlook, seg: (counts.seg||0)+(counts.mimecast||0) };
                           const usedBefore = manualRows.slice(0, i).filter(r=>r.type===row.type).reduce((s,r)=>s+(parseInt(r.count)||0),0);
                           const remaining = (typeAvail[row.type]||0) - usedBefore;
-                          const autoName = campaignBase ? `${campaignBase}_${row.type}${manualRows.filter((r,j)=>j<=i&&r.type===row.type).length > 1 ? '_'+manualRows.filter((r,j)=>j<=i&&r.type===row.type).length : ''}` : `NAME_${row.type}`;
+                          const typeCountSoFar = manualRows.filter((r,j)=>j<=i&&r.type===row.type).length;
+                          const typeTotalInRows = manualRows.filter(r=>r.type===row.type).length;
+                          const nameSuffix = typeTotalInRows > 1 ? `${row.type}_${typeCountSoFar}` : row.type;
+                          const autoName = campaignBase ? `${campaignBase}_${nameSuffix}` : `NAME_${nameSuffix}`;
 
                           return (
                             <div key={i} style={{ display:'grid', gridTemplateColumns:'140px 1fr 130px 36px', gap:8, alignItems:'center',
