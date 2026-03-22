@@ -115,14 +115,24 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
       warmupArr.forEach(ws => { warmupMap[ws.sender_email_id ?? ws.id] = ws; });
     } catch (_) {}
 
-    // Fetch active campaigns to know which senders are already in use
+    // Fetch latest 20 campaigns and count sender appearances
+    // (max ~8 active at once, 20 gives comfortable buffer without latency)
     let activeCampaignSenders = new Set();
     const senderCampaignCount = {};
     try {
-      const camps = await eb(req.params.id, '/api/campaigns?per_page=200');
-      const campArr = Array.isArray(camps) ? camps : (camps.data || []);
-      campArr.forEach(c => {
-        // Count active/running campaigns only
+      // Step 1: get list of 20 most recent campaigns
+      const listRes = await eb(req.params.id, '/api/campaigns?per_page=20&sort=created_at&order=desc');
+      const campList = Array.isArray(listRes) ? listRes : (listRes.data || []);
+
+      // Step 2: fetch each campaign detail in parallel to get sender_email_ids
+      const details = await Promise.all(
+        campList.map(c =>
+          eb(req.params.id, `/api/campaigns/${c.id}`).catch(() => c) // fall back to list data on error
+        )
+      );
+
+      details.forEach(raw => {
+        const c = raw.data || raw;
         const isActive = !c.status || c.status === 'active' || c.status === 'running' || c.status === 'sending';
         const ids = c.sender_email_ids || c.sender_emails?.map(s => s.id) || [];
         ids.forEach(id => {
@@ -132,7 +142,6 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
         });
       });
     } catch (_) {}
-    activeCampaignSenders.count = senderCampaignCount;
 
     const enriched = senders.map(s => {
       const wu = warmupMap[s.id] || {};
