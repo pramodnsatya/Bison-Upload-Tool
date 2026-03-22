@@ -187,23 +187,31 @@ function Divider() {
 // ─── Step bar ──────────────────────────────────────────────────────────────────
 const STEPS = ['Client','Upload CSV','Breakdown','Campaigns','Leads','Copy','Senders','Done'];
 
-function StepBar({ current }) {
+function StepBar({ current, onStepClick }) {
   return (
     <div style={{ display:'flex', alignItems:'center', overflowX:'auto', paddingBottom:4, marginBottom:36, gap:0 }}>
       {STEPS.map((label, i) => {
         const n=i+1, done=n<current, active=n===current;
+        const clickable = done && onStepClick && n < 8; // can't go back to Done
         return (
           <div key={n} style={{ display:'flex', alignItems:'center', flexShrink:0 }}>
-            <div style={{ display:'flex', flexDirection:'column', alignItems:'center', minWidth:68 }}>
+            <div
+              onClick={clickable ? ()=>onStepClick(n) : undefined}
+              style={{ display:'flex', flexDirection:'column', alignItems:'center', minWidth:68,
+                cursor: clickable ? 'pointer' : 'default' }}
+              title={clickable ? `Go back to ${label}` : undefined}>
               <div style={{ width:32, height:32, borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center',
                 fontWeight:700, fontSize:13, transition:'all .2s',
                 background: done?T.success : active?T.indigo : T.surfaceAlt,
                 color: done||active ? '#fff' : T.textMuted,
-                boxShadow: active?`0 0 0 4px ${T.indigoLight}`:'none',
-                border: `2px solid ${done?T.success:active?T.indigo:T.border}` }}>
+                boxShadow: active?`0 0 0 4px ${T.indigoLight}`: clickable?`0 0 0 2px ${T.success}33`:'none',
+                border: `2px solid ${done?T.success:active?T.indigo:T.border}`,
+                transform: clickable ? 'scale(1.05)' : 'scale(1)' }}>
                 {done ? '✓' : n}
               </div>
-              <span style={{ fontSize:11, marginTop:5, fontWeight:active?600:400, color:active?T.indigo:done?T.success:T.textMuted, whiteSpace:'nowrap' }}>
+              <span style={{ fontSize:11, marginTop:5, fontWeight:active?600:400,
+                color:active?T.indigo:done?T.success:T.textMuted, whiteSpace:'nowrap',
+                textDecoration: clickable?'underline':'none', textDecorationColor: T.success }}>
                 {label}
               </span>
             </div>
@@ -560,7 +568,12 @@ export default function App() {
 
         {/* ── DEPLOY TAB ─────────────────────────────────────────────────── */}
         {activeTab==='deploy' && <>
-        <StepBar current={step} />
+        <StepBar current={step} onStepClick={n => {
+          // Steps 1-3: always safe to go back
+          // Steps 4+: campaigns may already exist in EmailBison — warn but allow
+          setStep(n);
+          clearErr();
+        }} />
 
         {error && <Alert type="error">{error}</Alert>}
 
@@ -795,6 +808,9 @@ export default function App() {
         {/* ── STEP 4 ────────────────────────────────────────────────────── */}
         {step===4 && (
           <Card>
+            <div style={{ display:'flex', justifyContent:'flex-start', marginBottom:20 }}>
+              <Btn variant="ghost" size="sm" onClick={()=>setStep(3)}>← Back</Btn>
+            </div>
             <h2 style={{ fontSize:22, fontWeight:700, marginBottom:6 }}>Create campaigns</h2>
             <p style={{ fontSize:14, color:T.textSub, marginBottom:24 }}>Review the plan below then create all campaigns in EmailBison.</p>
             <div style={{ display:'flex', flexDirection:'column', gap:8, marginBottom:24 }}>
@@ -816,6 +832,13 @@ export default function App() {
         {/* ── STEP 5 ────────────────────────────────────────────────────── */}
         {step===5 && (
           <Card>
+            <div style={{ display:'flex', justifyContent:'flex-start', marginBottom:20 }}>
+              <Btn variant="ghost" size="sm" onClick={()=>setStep(3)}>← Back</Btn>
+            </div>
+            <div style={{ background:'#FFFBEB', border:'1px solid #FDE68A', borderRadius:10, padding:'10px 16px',
+              fontSize:13, color:'#92400E', marginBottom:16, display:'flex', gap:8, alignItems:'center' }}>
+              <span>⚠</span><span>Campaigns are already created in EmailBison. Going back to change the plan will not delete them — you may need to remove them manually in EmailBison first.</span>
+            </div>
             <h2 style={{ fontSize:22, fontWeight:700, marginBottom:6 }}>Upload leads</h2>
             <p style={{ fontSize:14, color:T.textSub, marginBottom:24 }}>Campaigns are ready. Choose how to handle existing leads, then upload.</p>
 
@@ -948,7 +971,7 @@ export default function App() {
             </div>
 
             <div style={{ marginTop:20, display:'flex', gap:10 }}>
-              <Btn variant="ghost" onClick={()=>setStep(5)}>← Back</Btn>
+              <Btn variant="ghost" size="sm" onClick={()=>setStep(5)}>← Back</Btn>
               <Btn onClick={applyEmailCopy} disabled={loading || !emailSteps.some(s=>s.subject.trim()||s.body.trim())} size="lg">
                 {loading ? <><Spinner color="#fff" /> &nbsp;Applying...</> : 'Apply Copy to All Campaigns →'}
               </Btn>
@@ -959,6 +982,9 @@ export default function App() {
         {/* ── STEP 7: Senders ─────────────────────────────────────────── */}
         {step===7 && (
           <div style={{ display:'flex', flexDirection:'column', gap:20 }}>
+            <div style={{ display:'flex', justifyContent:'flex-start', marginBottom:4 }}>
+              <Btn variant="ghost" size="sm" onClick={()=>setStep(6)}>← Back</Btn>
+            </div>
             <div>
               <h2 style={{ fontSize:22, fontWeight:700, marginBottom:4 }}>Select sender emails</h2>
               <p style={{ fontSize:14, color:T.textSub }}>
