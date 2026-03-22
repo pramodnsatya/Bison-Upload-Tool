@@ -168,9 +168,51 @@ app.post('/clients/:id/campaigns/:cid/leads', async (req, res) => {
 
 
 
+// Create sequence steps — confirmed endpoint from EmailBison support
+// POST /api/campaigns/{campaign_id}/sequence-steps
+// Body: { title, sequence_steps: [{email_subject, email_body, wait_in_days, order}] }
+app.post('/clients/:id/campaigns/:cid/sequence', async (req, res) => {
+  try {
+    const { steps } = req.body;
+    if (!steps?.length) return res.status(400).json({ error: 'steps required' });
+
+    // Format payload as EmailBison support documented
+    const sequence_steps = steps.map((s, i) => ({
+      email_subject: s.subject,
+      email_body:    s.body,
+      wait_in_days:  i === 0 ? 0 : (s.delay_days ?? i * 3),
+      order:         i + 1,
+    }));
+
+    const data = await eb(req.params.id,
+      `/api/campaigns/${req.params.cid}/sequence-steps`,
+      'POST',
+      { title: 'Main Sequence', sequence_steps }
+    );
+    res.json({ ok: true, data });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Assign sender emails — confirmed endpoint from EmailBison support
+// POST /api/campaigns/{campaign_id}/attach-sender-emails
+// Body: array of sender email IDs
 app.post('/clients/:id/campaigns/:cid/senders', async (req, res) => {
-  try { await eb(req.params.id, `/api/campaigns/${req.params.cid}`, 'PATCH', { sender_email_ids: req.body.senderIds }); res.json({ ok: true }); }
-  catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    const { senderIds } = req.body;
+    const data = await eb(
+      req.params.id,
+      `/api/campaigns/${req.params.cid}/attach-sender-emails`,
+      'POST',
+      senderIds  // support docs say: body is an array of sender email IDs
+    );
+    res.json({ ok: true, data });
+  } catch (e) {
+    // Fallback to PATCH if the new endpoint doesn't work
+    try {
+      await eb(req.params.id, `/api/campaigns/${req.params.cid}`, 'PATCH', { sender_email_ids: senderIds });
+      res.json({ ok: true, fallback: true });
+    } catch (e2) { res.status(500).json({ error: e.message, fallbackError: e2.message }); }
+  }
 });
 
 

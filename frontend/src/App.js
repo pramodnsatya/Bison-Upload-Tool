@@ -185,7 +185,7 @@ function Divider() {
 }
 
 // ─── Step bar ──────────────────────────────────────────────────────────────────
-const STEPS = ['Client','Upload CSV','Breakdown','Campaigns','Leads','Senders','Done'];
+const STEPS = ['Client','Upload CSV','Breakdown','Campaigns','Leads','Copy','Senders','Done'];
 
 function StepBar({ current }) {
   return (
@@ -305,6 +305,14 @@ export default function App() {
 
   const [duplicateMode, setDuplicateMode] = useState('skip');
 
+  // Email copy steps
+  const [emailSteps, setEmailSteps] = useState([
+    { subject: '', body: '', delay_days: 0 },
+    { subject: '', body: '', delay_days: 3 },
+    { subject: '', body: '', delay_days: 6 },
+  ]);
+  const [copyApplied, setCopyApplied] = useState(false);
+
   const [allSenders,   setAllSenders]   = useState([]);
   const [selSenders,   setSelSenders]   = useState({});
 
@@ -396,12 +404,32 @@ export default function App() {
         sel[c.name] = new Set(pool.slice(0, calcNeeded(c.leads.length, c.senderType)).map(s=>s.id));
       }
       setSelSenders(sel);
-      setStep(6);
+      setStep(6); // Go to Copy step first
     } catch(e) { setError(e.message); }
     finally { setLoading(false); }
   }
 
-  // Step 6: Assign senders
+  // Step 6: Email copy
+  async function applyEmailCopy() {
+    setLoading(true); clearErr();
+    try {
+      const validSteps = emailSteps.filter(s => s.subject.trim() || s.body.trim());
+      if (!validSteps.length) { setError('Add at least one email step.'); setLoading(false); return; }
+      for (const c of created) {
+        addLog(`Applying copy to ${c.name}...`);
+        const r = await api(`/clients/${clientId}/campaigns/${c.id}/sequence`, {
+          method: 'POST',
+          body: JSON.stringify({ steps: validSteps }),
+        });
+        addLog(`✓ ${c.name}: copy applied`, 'success');
+      }
+      setCopyApplied(true);
+      setStep(8);
+    } catch(e) { setError(e.message); }
+    finally { setLoading(false); }
+  }
+
+  // Step 7: Assign senders
   async function assignSenders() {
     setLoading(true); clearErr();
     try {
@@ -412,7 +440,7 @@ export default function App() {
         await api(`/clients/${clientId}/campaigns/${c.id}/senders`, { method:'POST', body:JSON.stringify({ senderIds:ids }) });
         addLog(`✓ ${c.name}: ${ids.length} senders assigned`,'success');
       }
-      setStep(7);
+      setStep(8);
     } catch(e) { setError(e.message); }
     finally { setLoading(false); }
   }
@@ -422,6 +450,8 @@ export default function App() {
     setShowMapping(false); setCounts(null); setSegments(null); setCampaignBase('');
     setNumCampaigns(null); setCampaignPlan([]); setCreated([]);
     setAllSenders([]); setSelSenders({}); setLog([]); clearErr();
+    setCopyApplied(false);
+    setEmailSteps([{subject:'',body:'',delay_days:0},{subject:'',body:'',delay_days:3},{subject:'',body:'',delay_days:6}]);
   }
 
   const clientName = clients.find(c=>c.id===clientId)?.name || '';
@@ -685,8 +715,103 @@ export default function App() {
           </Card>
         )}
 
-        {/* ── STEP 6: Senders ─────────────────────────────────────────── */}
+        {/* ── STEP 6: Email Copy ───────────────────────────────────────── */}
         {step===6 && (
+          <Card>
+            <h2 style={{ fontSize:22, fontWeight:700, marginBottom:4 }}>Email copy</h2>
+            <p style={{ fontSize:14, color:T.textSub, marginBottom:20 }}>
+              Enter your sequence. Each email is a separate card. Follow-ups send as replies in the same thread.
+            </p>
+
+            <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+              {emailSteps.map((s, i) => (
+                <div key={i} style={{ border:`1.5px solid ${i===0?T.border:'#D1FAE5'}`, borderRadius:14, overflow:'hidden' }}>
+                  {/* Header */}
+                  <div style={{ padding:'10px 18px', background:i===0?T.surfaceAlt:'#ECFDF5',
+                    borderBottom:`1px solid ${i===0?T.border:'#A7F3D0'}`,
+                    display:'flex', alignItems:'center', gap:12 }}>
+                    <div style={{ width:26, height:26, borderRadius:'50%', flexShrink:0,
+                      background:i===0?T.indigo:T.success, color:'#fff',
+                      display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:700 }}>
+                      {i+1}
+                    </div>
+                    <span style={{ fontWeight:700, fontSize:14, flex:1 }}>
+                      {i===0 ? 'Email 1 — Initial outreach' : `Follow-up ${i} — Reply in same thread`}
+                    </span>
+                    {i > 0 && (
+                      <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                        <span style={{ fontSize:12, color:T.textSub }}>Send on day</span>
+                        <input type="number" min={1} max={30} value={s.delay_days}
+                          onChange={e=>setEmailSteps(prev=>prev.map((x,j)=>j===i?{...x,delay_days:parseInt(e.target.value)||1}:x))}
+                          style={{ width:52, padding:'4px 8px', border:`1.5px solid ${T.border}`, borderRadius:8,
+                            fontSize:13, textAlign:'center', fontFamily:'inherit', outline:'none', background:T.surface }} />
+                        <button onClick={()=>setEmailSteps(prev=>prev.filter((_,j)=>j!==i))}
+                          style={{ background:'none', border:'none', cursor:'pointer', color:T.textMuted, fontSize:18, lineHeight:1 }}>×</button>
+                      </div>
+                    )}
+                  </div>
+                  {/* Subject + Body */}
+                  <div style={{ padding:'14px 18px 16px', display:'flex', flexDirection:'column', gap:10 }}>
+                    <div>
+                      <label style={{ fontSize:11, fontWeight:600, color:T.textMuted, textTransform:'uppercase', letterSpacing:'0.05em', display:'block', marginBottom:5 }}>
+                        Subject{i>0?' (usually Re: [original subject])':''}
+                      </label>
+                      <input value={s.subject}
+                        onChange={e=>setEmailSteps(prev=>prev.map((x,j)=>j===i?{...x,subject:e.target.value}:x))}
+                        placeholder={i===0?'e.g. Quick question about {company}':'e.g. Re: Quick question about {company}'}
+                        style={{ width:'100%', padding:'9px 12px', border:`1.5px solid ${T.border}`, borderRadius:9,
+                          fontSize:14, fontFamily:'inherit', color:T.text, background:T.surface, outline:'none' }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize:11, fontWeight:600, color:T.textMuted, textTransform:'uppercase', letterSpacing:'0.05em', display:'block', marginBottom:5 }}>
+                        Body
+                      </label>
+                      <textarea rows={7} value={s.body}
+                        onChange={e=>setEmailSteps(prev=>prev.map((x,j)=>j===i?{...x,body:e.target.value}:x))}
+                        placeholder={i===0?'Hi {first_name},\n\n[your message]\n\nBest,\n[Your name]':'[follow-up body]'}
+                        style={{ width:'100%', padding:'10px 12px', border:`1.5px solid ${T.border}`, borderRadius:9,
+                          fontSize:13, fontFamily:'ui-monospace,SFMono-Regular,Menlo,monospace', color:T.text,
+                          background:T.surface, outline:'none', resize:'vertical', lineHeight:1.7 }} />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Add follow-up */}
+            {emailSteps.length < 5 && (
+              <button onClick={()=>setEmailSteps(prev=>[...prev,{subject:'',body:'',delay_days:prev.length*3}])}
+                style={{ marginTop:12, width:'100%', padding:'11px', border:`2px dashed ${T.border}`,
+                  borderRadius:12, background:'transparent', cursor:'pointer', fontSize:13,
+                  color:T.textSub, fontWeight:600, fontFamily:'inherit' }}>
+                + Add follow-up email
+              </button>
+            )}
+
+            {/* Also load from template */}
+            <div style={{ marginTop:16, padding:'12px 16px', background:T.surfaceAlt, borderRadius:10,
+              display:'flex', alignItems:'center', gap:12, fontSize:13 }}>
+              <span style={{ color:T.textMuted }}>💡</span>
+              <span style={{ color:T.textSub }}>Want to reuse copy from a previous campaign?</span>
+              <button onClick={()=>setActiveTab('templates')}
+                style={{ marginLeft:'auto', padding:'6px 14px', background:T.indigoLight, color:T.indigo,
+                  border:`1px solid ${T.indigo}30`, borderRadius:8, cursor:'pointer', fontFamily:'inherit',
+                  fontSize:12, fontWeight:600 }}>
+                Open Templates →
+              </button>
+            </div>
+
+            <div style={{ marginTop:20, display:'flex', gap:10 }}>
+              <Btn variant="ghost" onClick={()=>setStep(5)}>← Back</Btn>
+              <Btn onClick={applyEmailCopy} disabled={loading || !emailSteps.some(s=>s.subject.trim()||s.body.trim())} size="lg">
+                {loading ? <><Spinner color="#fff" /> &nbsp;Applying...</> : 'Apply Copy to All Campaigns →'}
+              </Btn>
+            </div>
+          </Card>
+        )}
+
+        {/* ── STEP 7: Senders ─────────────────────────────────────────── */}
+        {step===7 && (
           <div style={{ display:'flex', flexDirection:'column', gap:20 }}>
             <div>
               <h2 style={{ fontSize:22, fontWeight:700, marginBottom:4 }}>Select senders</h2>
@@ -768,8 +893,8 @@ export default function App() {
           </div>
         )}
 
-        {/* ── STEP 7: Done ──────────────────────────────────────────────── */}
-        {step===7 && (
+        {/* ── STEP 8: Done ──────────────────────────────────────────────── */}
+        {step===8 && (
           <Card>
             <div style={{ textAlign:'center', padding:'32px 0 24px' }}>
               <div style={{ width:72, height:72, borderRadius:'50%', background:'#ECFDF5', border:`2px solid #A7F3D0`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:32, margin:'0 auto 20px' }}>🎉</div>
