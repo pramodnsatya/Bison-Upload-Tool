@@ -1109,8 +1109,8 @@ export default function App() {
                   {pool.length===0
                     ? <Alert type="warning">No senders found matching your filters. Try selecting "All".</Alert>
                     : (
-                      <div style={{ border:`1px solid ${T.border}`, borderRadius:10, overflow:'hidden' }}>
-                        <table>
+                      <div style={{ border:`1px solid ${T.border}`, borderRadius:10, overflowX:'auto' }}>
+                        <table style={{ minWidth:900 }}>
                           <thead>
                             <tr>
                               <th style={{width:36}}></th>

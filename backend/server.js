@@ -133,7 +133,11 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
 
       details.forEach(raw => {
         const c = raw.data || raw;
-        const isActive = !c.status || c.status === 'active' || c.status === 'running' || c.status === 'sending';
+        // Exclude paused, draft, completed, cancelled — only count truly active/sending campaigns
+        const isPaused = c.status === 'paused' || c.status === 'draft' ||
+                         c.status === 'completed' || c.status === 'cancelled' || c.status === 'stopped';
+        const isActive = !isPaused && (c.status === 'active' || c.status === 'running' ||
+                         c.status === 'sending' || !c.status);
         const ids = c.sender_email_ids || c.sender_emails?.map(s => s.id) || [];
         ids.forEach(id => {
           const sid = String(id);
