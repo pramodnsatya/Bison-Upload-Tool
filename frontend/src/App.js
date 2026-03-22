@@ -1039,9 +1039,12 @@ export default function App() {
               const filt = senderFilters[camp.name] || { provider: 'all', search: '' };
               const setFilt = (f) => setSenderFilters(prev => ({ ...prev, [camp.name]: { ...filt, ...f } }));
 
-              // Base pool — all senders for this campaign's type
+              // Base pool — match by provider, but also include 'other' since detection may miss some
               const basePool = allSenders
-                .filter(s => camp.senderType === 'outlook' ? s.provider === 'outlook' : s.provider === 'google')
+                .filter(s => {
+                  if (camp.senderType === 'outlook') return s.provider === 'outlook' || s.provider === 'other';
+                  return s.provider === 'google' || s.provider === 'other'; // google + seg both use google senders
+                })
                 .sort((a,b) => {
                   const sa = a.warmup_score ?? 0, sb = b.warmup_score ?? 0;
                   return sb !== sa ? sb - sa : (a.total_sent ?? 0) - (b.total_sent ?? 0);
@@ -1113,6 +1116,7 @@ export default function App() {
                               <th>Warmup Score</th>
                               <th>Warmup Sent</th>
                               <th>Total Sent</th>
+                              <th>Bounce Guard</th>
                               <th>Status</th>
                               <th>In Campaign</th>
                             </tr>
@@ -1149,6 +1153,16 @@ export default function App() {
                                   <td style={{fontWeight:600, color:scoreColor}}>{score??'—'}</td>
                                   <td style={{color:T.textSub}}>{s.warmup_sent!=null ? s.warmup_sent.toLocaleString() : '—'}</td>
                                   <td style={{color:T.textSub}}>{s.total_sent!=null ? s.total_sent.toLocaleString() : '—'}</td>
+                                  <td>
+                                    {s.bounce_protection == null
+                                      ? <span style={{fontSize:11,color:T.textMuted}}>—</span>
+                                      : <span style={{fontSize:11,fontWeight:600,padding:'2px 8px',borderRadius:999,
+                                          background:s.bounce_protection?'#ECFDF5':'#FEF2F2',
+                                          color:s.bounce_protection?T.success:T.error}}>
+                                          {s.bounce_protection?'✓ On':'Off'}
+                                        </span>
+                                    }
+                                  </td>
                                   <td>
                                     <span style={{ fontSize:11, fontWeight:600, padding:'2px 8px', borderRadius:999,
                                       background:s.status==='active'?'#ECFDF5':'#FEF2F2',

@@ -92,6 +92,15 @@ app.post('/map-and-segment', (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Debug: see raw fields from EmailBison sender-emails API response
+app.get('/clients/:id/sender-emails/raw', async (req, res) => {
+  try {
+    const base = await eb(req.params.id, '/api/sender-emails?per_page=5');
+    const senders = Array.isArray(base) ? base : (base.data || []);
+    res.json({ count: senders.length, first: senders[0] || null, keys: senders[0] ? Object.keys(senders[0]) : [] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/clients/:id/sender-emails', async (req, res) => {
   try {
     // Fetch base sender emails
@@ -119,17 +128,28 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
 
     const enriched = senders.map(s => {
       const wu = warmupMap[s.id] || {};
-      // Detect provider from email domain / smtp_host
-      const email = (s.email || '').toLowerCase();
-      const smtp  = (s.smtp_host || s.host || '').toLowerCase();
-      let provider = 'other';
-      if (smtp.includes('google') || smtp.includes('gmail') || email.endsWith('@gmail.com')) provider = 'google';
-      else if (smtp.includes('outlook') || smtp.includes('microsoft') || smtp.includes('office365') || smtp.includes('hotmail')) provider = 'outlook';
-      else if (s.email_provider) {
-        const p = s.email_provider.toLowerCase();
-        if (p.includes('google') || p.includes('gmail')) provider = 'google';
-        else if (p.includes('microsoft') || p.includes('outlook')) provider = 'outlook';
-      }
+
+      // Provider detection — check every field EmailBison might use
+      const emailAddr  = (s.email || '').toLowerCase();
+      const smtpHost   = (s.smtp_host || s.host || s.smtp || '').toLowerCase();
+      const provField  = (s.email_provider || s.provider || s.type || s.service || '').toLowerCase();
+      const emailDomain = emailAddr.includes('@') ? emailAddr.split('@')[1] : '';
+
+      const isGoogle = smtpHost.includes('google') || smtpHost.includes('gmail') ||
+                       provField.includes('google') || provField.includes('gmail') || provField.includes('gsuite') ||
+                       emailDomain === 'gmail.com' || emailDomain.endsWith('.google.com');
+
+      const isOutlook = smtpHost.includes('outlook') || smtpHost.includes('microsoft') ||
+                        smtpHost.includes('office365') || smtpHost.includes('hotmail') ||
+                        provField.includes('microsoft') || provField.includes('outlook') ||
+                        provField.includes('office365') || provField.includes('exchange') ||
+                        emailDomain === 'outlook.com' || emailDomain === 'hotmail.com' ||
+                        emailDomain === 'live.com' || emailDomain.endsWith('.onmicrosoft.com');
+
+      const provider = isGoogle ? 'google' : isOutlook ? 'outlook' : 'other';
+
+      const bounceProtection = s.bounce_protection ?? s.bounce_guard ?? s.is_bounce_protected ??
+                               wu.bounce_protection ?? wu.bounce_guard ?? null;
 
       return {
         id:               s.id,
@@ -137,11 +157,12 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
         provider,
         status:           s.status || 'active',
         warmup_enabled:   wu.warmup_enabled ?? s.warmup_enabled ?? false,
-        warmup_score:     wu.score ?? wu.warmup_score ?? s.warmup_score ?? null,
-        warmup_sent:      wu.total_warmup_sent ?? wu.warmup_emails_sent ?? null,
-        total_sent:       s.total_sent ?? s.emails_sent ?? null,
+        warmup_score:     wu.score ?? wu.warmup_score ?? s.warmup_score ?? s.reputation_score ?? null,
+        warmup_sent:      wu.total_warmup_sent ?? wu.warmup_emails_sent ?? wu.emails_sent ?? null,
+        total_sent:       s.total_sent ?? s.emails_sent ?? s.sent_count ?? null,
+        bounce_protection: bounceProtection,
         active_campaigns: activeCampaignSenders.has(String(s.id)),
-        daily_limit:      s.daily_limit ?? s.max_daily_sends ?? null,
+        daily_limit:      s.daily_limit ?? s.max_daily_sends ?? s.daily_send_limit ?? null,
         raw:              s,
       };
     });
