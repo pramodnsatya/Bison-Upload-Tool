@@ -178,10 +178,11 @@ app.post('/clients/:id/campaigns/:cid/sequence', async (req, res) => {
     if (!steps?.length) return res.status(400).json({ error: 'steps required' });
 
     // Format payload as EmailBison support documented
+    // wait_in_days must be >= 1 for all steps (EmailBison requirement)
     const sequence_steps = steps.map((s, i) => ({
       email_subject: s.subject,
       email_body:    s.body,
-      wait_in_days:  i === 0 ? 0 : (s.delay_days ?? i * 3),
+      wait_in_days:  Math.max(1, i === 0 ? 1 : (s.delay_days ?? i * 3)),
       order:         i + 1,
     }));
 

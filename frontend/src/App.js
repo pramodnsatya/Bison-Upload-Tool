@@ -309,9 +309,7 @@ export default function App() {
 
   // Email copy steps
   const [emailSteps, setEmailSteps] = useState([
-    { subject: '', body: '', delay_days: 0 },
-    { subject: '', body: '', delay_days: 3 },
-    { subject: '', body: '', delay_days: 6 },
+    { subject: '', body: '', delay_days: 1 },
   ]);
   const [copyApplied, setCopyApplied] = useState(false);
 
@@ -491,7 +489,7 @@ export default function App() {
     setNumCampaigns(null); setCampaignPlan([]); setCreated([]);
     setAllSenders([]); setSelSenders({}); setLog([]); clearErr();
     setCopyApplied(false);
-    setEmailSteps([{subject:'',body:'',delay_days:0},{subject:'',body:'',delay_days:3},{subject:'',body:'',delay_days:6}]);
+    setEmailSteps([{subject:'',body:'',delay_days:1}]);
     setPlanMode('auto'); setManualRows([]);
   }
 
