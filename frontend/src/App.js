@@ -1050,9 +1050,14 @@ export default function App() {
                   return sb !== sa ? sb - sa : (a.total_sent ?? 0) - (b.total_sent ?? 0);
                 });
 
-              // Apply filters
+              // Apply filters — Google/Outlook also include 'other' (undetected) senders
               const pool = basePool
-                .filter(s => filt.provider === 'all' || s.provider === filt.provider)
+                .filter(s => {
+                  if (filt.provider === 'all') return true;
+                  if (filt.provider === 'google')  return s.provider === 'google'  || s.provider === 'other';
+                  if (filt.provider === 'outlook') return s.provider === 'outlook' || s.provider === 'other';
+                  return s.provider === filt.provider;
+                })
                 .filter(s => !filt.search || s.email.toLowerCase().includes(filt.search.toLowerCase()));
 
               const needed = calcNeeded(camp.leads.length, camp.senderType);

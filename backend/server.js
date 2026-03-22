@@ -180,6 +180,25 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Debug: see raw fields from a campaign GET to learn correct field names
+app.get('/clients/:id/campaigns/debug', async (req, res) => {
+  try {
+    const d = await eb(req.params.id, '/api/campaigns?per_page=1');
+    const camps = Array.isArray(d) ? d : (d.data || []);
+    if (!camps.length) return res.json({ error: 'No campaigns found' });
+    const camp = camps[0];
+    // Also fetch the full single campaign to see all settings fields
+    let full = null;
+    try { full = await eb(req.params.id, `/api/campaigns/${camp.id}`); } catch(_) {}
+    res.json({
+      keys_from_list:   Object.keys(camp),
+      keys_from_detail: full ? Object.keys(full.data || full) : [],
+      sample_list:      camp,
+      sample_detail:    full?.data || full,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/clients/:id/campaigns', async (req, res) => {
   try {
     // Create campaign with all known plain text / tracking field names
