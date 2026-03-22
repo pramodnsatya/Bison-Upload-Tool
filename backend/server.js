@@ -170,7 +170,7 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
         total_sent:       s.total_sent ?? s.emails_sent ?? s.sent_count ?? null,
         bounce_protection: bounceProtection,
         active_campaigns:       activeCampaignSenders.has(String(s.id)),
-        active_campaign_count:  activeCampaignSenders.count ? (activeCampaignSenders.count[String(s.id)] || 0) : 0,
+        active_campaign_count:  senderCampaignCount[String(s.id)] || 0,
         daily_limit:      s.daily_limit ?? s.max_daily_sends ?? s.daily_send_limit ?? null,
         raw:              s,
       };

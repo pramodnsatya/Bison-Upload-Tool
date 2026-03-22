@@ -1167,13 +1167,19 @@ export default function App() {
                                     }
                                   </td>
                                   <td>
-                                    <span style={{ fontSize:11, fontWeight:600, padding:'2px 8px', borderRadius:999,
-                                      background:s.status==='active'?'#ECFDF5':'#FEF2F2',
-                                      color:s.status==='active'?T.success:T.error }}>
-                                      {s.status||'active'}
-                                    </span>
+                                    {(() => {
+                                      const st = (s.status || 'connected').toLowerCase().trim();
+                                      const isGreen = st === 'active' || st === 'connected' || st === 'enabled' || st === 'ok' || st === 'running';
+                                      return (
+                                        <span style={{ fontSize:11, fontWeight:600, padding:'2px 8px', borderRadius:999, whiteSpace:'nowrap',
+                                          background: isGreen ? '#DCFCE7' : '#FEF2F2',
+                                          color:      isGreen ? '#15803D' : '#DC2626' }}>
+                                          {s.status || 'Connected'}
+                                        </span>
+                                      );
+                                    })()}
                                   </td>
-                                  <td>
+                                  <td style={{textAlign:'center'}}>
                                     {(s.active_campaign_count||0) > 0
                                       ? <span style={{fontSize:12,fontWeight:700,color:'#D97706',background:'#FEF3C7',padding:'2px 9px',borderRadius:999}}>
                                           {s.active_campaign_count}
