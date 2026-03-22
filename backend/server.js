@@ -182,12 +182,12 @@ app.post('/clients/:id/campaigns/:cid/leads', async (req, res) => {
       const batch = mapped.slice(i, i + BATCH);
       for (const lead of batch) {
         try {
-          // Try to create the lead
+          // Try to create the lead — succeeds only if they are NEW to this workspace
           const created = await eb(req.params.id, '/api/leads', 'POST', lead);
           const leadId = created.id || created.data?.id || created.lead?.id;
-          if (leadId) allLeadIds.push(leadId);
+          if (leadId) allLeadIds.push(leadId); // Brand new lead — always add to campaign
         } catch (err) {
-          // Lead likely already exists — look it up
+          // Lead already exists in this workspace
           try {
             const found = await eb(req.params.id, `/api/leads?search=${encodeURIComponent(lead.email)}&per_page=1`);
             const arr = Array.isArray(found) ? found : (found.data || []);
@@ -195,16 +195,15 @@ app.post('/clients/:id/campaigns/:cid/leads', async (req, res) => {
 
             if (existing) {
               if (duplicateMode === 'skip') {
+                // SKIP: do NOT add this lead to the campaign at all
                 skipped++;
-                // Still attach existing lead to campaign
-                allLeadIds.push(existing.id);
               } else if (duplicateMode === 'update' || duplicateMode === 'replace') {
-                // Update the lead fields via PUT
+                // UPDATE/REPLACE: refresh their fields and add to campaign
                 await eb(req.params.id, `/api/leads/${existing.id}`, 'PUT', lead);
                 allLeadIds.push(existing.id);
               }
             }
-          } catch (_) { /* truly skip */ }
+          } catch (_) { /* silently skip on lookup failure */ }
         }
       }
     }

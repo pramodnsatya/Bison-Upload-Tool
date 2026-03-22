@@ -891,7 +891,7 @@ export default function App() {
               </label>
               <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:10 }}>
                 {[
-                  { val:'skip',    icon:'⏭', title:'Skip',    desc:'Keep existing data unchanged, still add to campaign' },
+                  { val:'skip',    icon:'⏭', title:'Skip',    desc:'Existing workspace leads are excluded from this campaign entirely' },
                   { val:'update',  icon:'✏️', title:'Update',  desc:'Overwrite fields with new data from CSV' },
                   { val:'replace', icon:'🔄', title:'Replace', desc:'Full replace — same as update via API' },
                 ].map(opt=>(
