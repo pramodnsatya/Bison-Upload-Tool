@@ -146,42 +146,40 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
     const enriched = senders.map(s => {
       const wu = warmupMap[s.id] || {};
 
-      // Provider detection — check every field EmailBison might use
-      const emailAddr  = (s.email || '').toLowerCase();
-      const smtpHost   = (s.smtp_host || s.host || s.smtp || '').toLowerCase();
-      const provField  = (s.email_provider || s.provider || s.type || s.service || '').toLowerCase();
-      const emailDomain = emailAddr.includes('@') ? emailAddr.split('@')[1] : '';
+      // Provider from confirmed 'type' field: 'google_oauth', 'microsoft_oauth', etc.
+      const typeField = (s.type || '').toLowerCase();
+      const emailDomain = (s.email||'').includes('@') ? s.email.split('@')[1].toLowerCase() : '';
+      let provider = 'other';
+      if (typeField.includes('google') || typeField.includes('gmail') || emailDomain === 'gmail.com') {
+        provider = 'google';
+      } else if (typeField.includes('microsoft') || typeField.includes('outlook') ||
+                 typeField.includes('office') || emailDomain === 'outlook.com' ||
+                 emailDomain === 'hotmail.com' || emailDomain === 'live.com') {
+        provider = 'outlook';
+      }
 
-      const isGoogle = smtpHost.includes('google') || smtpHost.includes('gmail') ||
-                       provField.includes('google') || provField.includes('gmail') || provField.includes('gsuite') ||
-                       emailDomain === 'gmail.com' || emailDomain.endsWith('.google.com');
-
-      const isOutlook = smtpHost.includes('outlook') || smtpHost.includes('microsoft') ||
-                        smtpHost.includes('office365') || smtpHost.includes('hotmail') ||
-                        provField.includes('microsoft') || provField.includes('outlook') ||
-                        provField.includes('office365') || provField.includes('exchange') ||
-                        emailDomain === 'outlook.com' || emailDomain === 'hotmail.com' ||
-                        emailDomain === 'live.com' || emailDomain.endsWith('.onmicrosoft.com');
-
-      const provider = isGoogle ? 'google' : isOutlook ? 'outlook' : 'other';
-
-      const bounceProtection = s.bounce_protection ?? s.bounce_guard ?? s.is_bounce_protected ??
-                               wu.bounce_protection ?? wu.bounce_guard ?? null;
+      // Bounce protection is a tag named "Bounce Protection" in the tags array
+      const tags = Array.isArray(s.tags) ? s.tags : [];
+      const bounceProtection = tags.some(t => (t.name||'').toLowerCase().includes('bounce protection'));
 
       return {
-        id:               s.id,
-        email:            s.email,
+        id:                    s.id,
+        name:                  s.name || '',
+        email:                 s.email,
         provider,
-        status:           s.status || 'active',
-        warmup_enabled:   wu.warmup_enabled ?? s.warmup_enabled ?? false,
-        warmup_score:     wu.score ?? wu.warmup_score ?? s.warmup_score ?? s.reputation_score ?? null,
-        warmup_sent:      wu.total_warmup_sent ?? wu.warmup_emails_sent ?? wu.emails_sent ?? null,
-        total_sent:       s.total_sent ?? s.emails_sent ?? s.sent_count ?? null,
-        bounce_protection: bounceProtection,
-        active_campaigns:       activeCampaignSenders.has(String(s.id)),
-        active_campaign_count:  senderCampaignCount[String(s.id)] || 0,
-        daily_limit:      s.daily_limit ?? s.max_daily_sends ?? s.daily_send_limit ?? null,
-        raw:              s,
+        type:                  s.type || '',
+        status:                s.status || 'Connected',
+        warmup_enabled:        s.warmup_enabled ?? wu.warmup_enabled ?? false,
+        warmup_score:          wu.score ?? wu.warmup_score ?? wu.reputation_score ?? null,
+        warmup_sent:           wu.total_warmup_sent ?? wu.warmup_emails_sent ?? null,
+        emails_sent:           s.emails_sent_count ?? null,
+        bounced:               s.bounced_count ?? null,
+        leads_contacted:       s.total_leads_contacted_count ?? null,
+        bounce_protection:     bounceProtection,
+        active_campaigns:      activeCampaignSenders.has(String(s.id)),
+        active_campaign_count: senderCampaignCount[String(s.id)] || 0,
+        daily_limit:           s.daily_limit ?? null,
+        tags:                  tags.map(t => t.name),
       };
     });
 

@@ -1150,21 +1150,18 @@ export default function App() {
                                     <span style={{ fontSize:11, fontWeight:600, padding:'2px 7px', borderRadius:5,
                                       background: s.provider==='google'?'#EFF6FF':s.provider==='outlook'?'#FFF7ED':'#F3F4F6',
                                       color: s.provider==='google'?T.indigo:s.provider==='outlook'?'#C2410C':'#6B7280' }}>
-                                      {s.provider==='google'?'Google':s.provider==='outlook'?'Outlook':'Other'}
+                                      {s.provider==='google'?'Google':s.provider==='outlook'?'Outlook':s.type||'Other'}
                                     </span>
                                   </td>
                                   <td style={{fontWeight:600, color:scoreColor}}>{score??'—'}</td>
-                                  <td style={{color:T.textSub}}>{s.warmup_sent!=null ? s.warmup_sent.toLocaleString() : '—'}</td>
-                                  <td style={{color:T.textSub}}>{s.total_sent!=null ? s.total_sent.toLocaleString() : '—'}</td>
+                                  <td style={{color:T.textSub}}>{s.warmup_sent!=null ? Number(s.warmup_sent).toLocaleString() : '—'}</td>
+                                  <td style={{color:T.textSub}}>{s.emails_sent!=null ? s.emails_sent.toLocaleString() : '—'}</td>
                                   <td>
-                                    {s.bounce_protection == null
-                                      ? <span style={{fontSize:11,color:T.textMuted}}>—</span>
-                                      : <span style={{fontSize:11,fontWeight:600,padding:'2px 8px',borderRadius:999,
-                                          background:s.bounce_protection?'#ECFDF5':'#FEF2F2',
-                                          color:s.bounce_protection?T.success:T.error}}>
-                                          {s.bounce_protection?'✓ On':'Off'}
-                                        </span>
-                                    }
+                                    <span style={{fontSize:11,fontWeight:600,padding:'2px 8px',borderRadius:999,
+                                      background:s.bounce_protection?'#DCFCE7':'#F3F4F6',
+                                      color:s.bounce_protection?'#15803D':'#9CA3AF'}}>
+                                      {s.bounce_protection?'✓ On':'—'}
+                                    </span>
                                   </td>
                                   <td>
                                     {(() => {
