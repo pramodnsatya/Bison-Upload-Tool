@@ -8,6 +8,22 @@ async function api(path, opts = {}) {
   return data;
 }
 
+// Strip HTML tags from email body pulled from EmailBison (which stores as HTML)
+function stripHtml(html) {
+  if (!html) return '';
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')   // <br> → newline
+    .replace(/<\/p>/gi, '\n')         // </p> → newline
+    .replace(/<[^>]+>/g, '')           // strip all other tags
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/\n\n+/g, '\n\n')     // collapse excess newlines
+    .trim();
+}
+
 // ─── Logic helpers ────────────────────────────────────────────────────────────
 function calcNeeded(count, type) { return Math.ceil(count / (type === 'outlook' ? 5 : 15)); }
 
@@ -577,7 +593,17 @@ export default function App() {
       <div style={{ maxWidth:920, margin:'0 auto', padding:'32px 20px 60px' }}>
 
         {/* ── TEMPLATES TAB ──────────────────────────────────────────────── */}
-        {activeTab==='templates' && <TemplatesTab clientId={clientId} clients={clients} />}
+        {activeTab==='templates' && <TemplatesTab clientId={clientId} clients={clients} onUseTemplate={tpl => {
+          // Strip HTML from bodies, populate emailSteps, switch to deploy/copy
+          const steps = tpl.steps.map(s => ({
+            subject:    s.subject || s.email_subject || '',
+            body:       stripHtml(s.body || s.email_body || ''),
+            delay_days: Math.max(1, s.delay_days ?? s.wait_in_days ?? 1),
+          }));
+          setEmailSteps(steps);
+          setActiveTab('deploy');
+          setStep(6); // go straight to copy step with it pre-filled
+        }} />}
 
         {/* ── DEPLOY TAB ─────────────────────────────────────────────────── */}
         {activeTab==='deploy' && <>
@@ -1210,7 +1236,7 @@ export default function App() {
 }
 
 // ─── Templates Tab ────────────────────────────────────────────────────────────
-function TemplatesTab({ clientId, clients }) {
+function TemplatesTab({ clientId, clients, onUseTemplate }) {
   const [templates,    setTemplates]    = useState([]);
   const [tab,          setTab]          = useState('saved'); // 'saved' | 'pull'
   const [loading,      setLoading]      = useState(false);
@@ -1358,10 +1384,20 @@ function TemplatesTab({ clientId, clients }) {
                           <span>Saved {new Date(tpl.createdAt).toLocaleDateString()}</span>
                         </div>
                       </div>
-                      <button onClick={()=>deleteTemplate(tpl.id, tpl.name)}
-                        style={{ background:'none', border:`1px solid ${T2.border}`, borderRadius:8, padding:'5px 10px', cursor:'pointer', fontSize:12, color:T2.textMuted, fontFamily:'inherit' }}>
-                        Delete
-                      </button>
+                      <div style={{ display:'flex', gap:8, flexShrink:0 }}>
+                        {onUseTemplate && (
+                          <button onClick={()=>onUseTemplate(tpl)}
+                            style={{ background:T2.indigo, border:'none', borderRadius:8, padding:'6px 14px',
+                              cursor:'pointer', fontSize:12, color:'#fff', fontFamily:'inherit', fontWeight:600 }}>
+                            Use Template →
+                          </button>
+                        )}
+                        <button onClick={()=>deleteTemplate(tpl.id, tpl.name)}
+                          style={{ background:'none', border:`1px solid ${T2.border}`, borderRadius:8, padding:'5px 10px',
+                            cursor:'pointer', fontSize:12, color:T2.textMuted, fontFamily:'inherit' }}>
+                          Delete
+                        </button>
+                      </div>
                     </div>
                     {/* Step preview */}
                     <div style={{ borderTop:`1px solid ${T2.border}`, background:T2.bg }}>
@@ -1372,7 +1408,7 @@ function TemplatesTab({ clientId, clients }) {
                             <div style={{ fontSize:13, fontWeight:600, color:T2.text }}>{s.subject || '(no subject)'}</div>
                             <div style={{ fontSize:12, color:T2.textMuted, marginTop:2, display:'flex', gap:10 }}>
                               {i>0 && <span>Day {s.delay_days} · Reply in thread</span>}
-                              <span>{(s.body||'').split(/\s+/).slice(0,8).join(' ')}{(s.body||'').split(/\s+/).length>8?'…':''}</span>
+                              <span>{(()=>{ const t=stripHtml(s.body||''); const w=t.split(/\s+/); return w.slice(0,8).join(' ')+(w.length>8?'…':''); })()}</span>
                             </div>
                           </div>
                         </div>
@@ -1447,7 +1483,7 @@ function TemplatesTab({ clientId, clients }) {
                       {i>0 && <span style={{ fontSize:11, color:T2.textMuted, marginLeft:'auto' }}>Day {s.delay_days} · Reply</span>}
                     </div>
                     <div style={{ fontSize:12, color:T2.textMuted, marginLeft:30, fontFamily:'monospace', whiteSpace:'pre-wrap', maxHeight:60, overflow:'hidden' }}>
-                      {(s.body||'').slice(0,200)}{(s.body||'').length>200?'…':''}
+                      {stripHtml(s.body||'').slice(0,200)}{stripHtml(s.body||'').length>200?'…':''}
                     </div>
                   </div>
                 ))}
