@@ -500,7 +500,7 @@ export default function App() {
         addLog(`✓ ${c.name}: copy applied`, 'success');
       }
       setCopyApplied(true);
-      setStep(8);
+      setStep(7); // → Senders step
     } catch(e) { setError(e.message); }
     finally { setLoading(false); }
   }

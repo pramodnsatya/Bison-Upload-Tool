@@ -152,9 +152,41 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
 
 app.post('/clients/:id/campaigns', async (req, res) => {
   try {
-    const d = await eb(req.params.id, '/api/campaigns', 'POST', { name: req.body.name, track_opens: false, track_clicks: false, plain_text: true });
+    // Create campaign with all known plain text / tracking field names
+    // (EmailBison field names vary slightly across instances)
+    const d = await eb(req.params.id, '/api/campaigns', 'POST', {
+      name:              req.body.name,
+      // Plain text — try all known variants
+      plain_text:        true,
+      plain_text_emails: true,
+      is_plain_text:     true,
+      // Tracking — off for deliverability
+      track_opens:       false,
+      track_clicks:      false,
+      tracking_opens:    false,
+      tracking_clicks:   false,
+    });
     const id = d.id || d.data?.id || d.campaign?.id;
-    try { await eb(req.params.id, `/api/campaigns/${id}`, 'PATCH', { sending_days: ['monday','tuesday','wednesday','thursday','friday'], sending_hours_start: '08:00', sending_hours_end: '19:00', timezone: 'America/New_York' }); } catch (_) {}
+
+    // Apply schedule + settings via PATCH (more reliable than creation payload)
+    try {
+      await eb(req.params.id, `/api/campaigns/${id}`, 'PATCH', {
+        // Schedule
+        sending_days:         ['monday','tuesday','wednesday','thursday','friday'],
+        sending_hours_start:  '08:00',
+        sending_hours_end:    '19:00',
+        timezone:             'America/New_York',
+        // Plain text + tracking — re-apply in PATCH in case POST ignored them
+        plain_text:           true,
+        plain_text_emails:    true,
+        is_plain_text:        true,
+        track_opens:          false,
+        track_clicks:         false,
+        tracking_opens:       false,
+        tracking_clicks:      false,
+      });
+    } catch (_) {}
+
     res.json({ id, name: req.body.name });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
