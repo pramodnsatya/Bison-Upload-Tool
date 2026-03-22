@@ -117,14 +117,22 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
 
     // Fetch active campaigns to know which senders are already in use
     let activeCampaignSenders = new Set();
+    const senderCampaignCount = {};
     try {
-      const camps = await eb(req.params.id, '/api/campaigns?per_page=200&status=active');
+      const camps = await eb(req.params.id, '/api/campaigns?per_page=200');
       const campArr = Array.isArray(camps) ? camps : (camps.data || []);
       campArr.forEach(c => {
+        // Count active/running campaigns only
+        const isActive = !c.status || c.status === 'active' || c.status === 'running' || c.status === 'sending';
         const ids = c.sender_email_ids || c.sender_emails?.map(s => s.id) || [];
-        ids.forEach(id => activeCampaignSenders.add(String(id)));
+        ids.forEach(id => {
+          const sid = String(id);
+          senderCampaignCount[sid] = (senderCampaignCount[sid] || 0) + 1;
+          if (isActive) activeCampaignSenders.add(sid);
+        });
       });
     } catch (_) {}
+    activeCampaignSenders.count = senderCampaignCount;
 
     const enriched = senders.map(s => {
       const wu = warmupMap[s.id] || {};
@@ -161,7 +169,8 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
         warmup_sent:      wu.total_warmup_sent ?? wu.warmup_emails_sent ?? wu.emails_sent ?? null,
         total_sent:       s.total_sent ?? s.emails_sent ?? s.sent_count ?? null,
         bounce_protection: bounceProtection,
-        active_campaigns: activeCampaignSenders.has(String(s.id)),
+        active_campaigns:       activeCampaignSenders.has(String(s.id)),
+        active_campaign_count:  activeCampaignSenders.count ? (activeCampaignSenders.count[String(s.id)] || 0) : 0,
         daily_limit:      s.daily_limit ?? s.max_daily_sends ?? s.daily_send_limit ?? null,
         raw:              s,
       };
@@ -304,22 +313,34 @@ app.post('/clients/:id/campaigns/:cid/sequence', async (req, res) => {
 // POST /api/campaigns/{campaign_id}/attach-sender-emails
 // Body: array of sender email IDs
 app.post('/clients/:id/campaigns/:cid/senders', async (req, res) => {
+  const { senderIds } = req.body;
+  const errors = [];
+
+  // Try 1: { sender_email_ids: [...] } on attach-sender-emails
   try {
-    const { senderIds } = req.body;
-    const data = await eb(
-      req.params.id,
-      `/api/campaigns/${req.params.cid}/attach-sender-emails`,
-      'POST',
-      senderIds  // support docs say: body is an array of sender email IDs
-    );
-    res.json({ ok: true, data });
-  } catch (e) {
-    // Fallback to PATCH if the new endpoint doesn't work
-    try {
-      await eb(req.params.id, `/api/campaigns/${req.params.cid}`, 'PATCH', { sender_email_ids: senderIds });
-      res.json({ ok: true, fallback: true });
-    } catch (e2) { res.status(500).json({ error: e.message, fallbackError: e2.message }); }
-  }
+    await eb(req.params.id, `/api/campaigns/${req.params.cid}/attach-sender-emails`, 'POST', { sender_email_ids: senderIds });
+    return res.json({ ok: true, method: 'attach-sender-emails-obj' });
+  } catch (e1) { errors.push(`attach-obj: ${e1.message}`); }
+
+  // Try 2: raw array on attach-sender-emails
+  try {
+    await eb(req.params.id, `/api/campaigns/${req.params.cid}/attach-sender-emails`, 'POST', senderIds);
+    return res.json({ ok: true, method: 'attach-sender-emails-arr' });
+  } catch (e2) { errors.push(`attach-arr: ${e2.message}`); }
+
+  // Try 3: PATCH with sender_email_ids
+  try {
+    await eb(req.params.id, `/api/campaigns/${req.params.cid}`, 'PATCH', { sender_email_ids: senderIds });
+    return res.json({ ok: true, method: 'patch-sender-ids' });
+  } catch (e3) { errors.push(`patch: ${e3.message}`); }
+
+  // Try 4: PATCH with sender_emails
+  try {
+    await eb(req.params.id, `/api/campaigns/${req.params.cid}`, 'PATCH', { sender_emails: senderIds });
+    return res.json({ ok: true, method: 'patch-sender-emails' });
+  } catch (e4) { errors.push(`patch-emails: ${e4.message}`); }
+
+  res.status(500).json({ error: 'All sender assignment methods failed', errors });
 });
 
 

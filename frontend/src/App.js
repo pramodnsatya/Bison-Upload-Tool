@@ -1083,13 +1083,13 @@ export default function App() {
 
                   {/* Filters row */}
                   <div style={{ display:'flex', gap:8, marginBottom:12, flexWrap:'wrap', alignItems:'center' }}>
-                    {/* Provider filter */}
-                    {[['all','All'],['google','Google'],['outlook','Outlook']].map(([v,l])=>(
+                    {/* Provider filter — visual only, all senders shown regardless */}
+                    {[['all','All'],['google','Google'],['outlook','Outlook'],['other','Other']].map(([v,l])=>(
                       <button key={v} onClick={()=>setFilt({provider:v})}
                         style={{ padding:'5px 12px', borderRadius:8, border:`1.5px solid ${filt.provider===v?T.indigo:T.border}`,
                           background:filt.provider===v?T.indigoLight:T.surface, color:filt.provider===v?T.indigo:T.textSub,
                           fontSize:12, fontWeight:filt.provider===v?600:400, cursor:'pointer', fontFamily:'inherit' }}>
-                        {l}
+                        {l}{v!=='all'?` (${allSenders.filter(s=>s.provider===v).length})`:''}
                       </button>
                     ))}
                     {/* Search */}
@@ -1104,7 +1104,7 @@ export default function App() {
                   </div>
 
                   {pool.length===0
-                    ? <Alert type="warning">No {camp.senderType} senders found matching your filters.</Alert>
+                    ? <Alert type="warning">No senders found matching your filters. Try selecting "All".</Alert>
                     : (
                       <div style={{ border:`1px solid ${T.border}`, borderRadius:10, overflow:'hidden' }}>
                         <table>
@@ -1118,7 +1118,7 @@ export default function App() {
                               <th>Total Sent</th>
                               <th>Bounce Guard</th>
                               <th>Status</th>
-                              <th>In Campaign</th>
+                              <th># Campaigns</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1171,9 +1171,11 @@ export default function App() {
                                     </span>
                                   </td>
                                   <td>
-                                    {s.active_campaigns
-                                      ? <span style={{fontSize:11,fontWeight:600,color:'#D97706',background:'#FEF3C7',padding:'2px 8px',borderRadius:999}}>● Active</span>
-                                      : <span style={{fontSize:11,color:T.textMuted}}>—</span>
+                                    {(s.active_campaign_count||0) > 0
+                                      ? <span style={{fontSize:12,fontWeight:700,color:'#D97706',background:'#FEF3C7',padding:'2px 9px',borderRadius:999}}>
+                                          {s.active_campaign_count}
+                                        </span>
+                                      : <span style={{fontSize:11,color:T.textMuted}}>0</span>
                                     }
                                   </td>
                                 </tr>
