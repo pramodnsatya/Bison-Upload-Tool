@@ -1275,6 +1275,7 @@ function DraftsTab({ clientId, clients, allSenders }) {
   const [templates, setTemplates] = useState([]);
   const [selClient, setSelClient] = useState(clientId || '');
   const [localSenders, setLocalSenders] = useState([]);
+  const [sendersLoading, setSendersLoading] = useState(false);
 
   useEffect(() => {
     api('/templates').then(setTemplates).catch(() => {});
@@ -1284,9 +1285,11 @@ function DraftsTab({ clientId, clients, allSenders }) {
     if (selClient) {
       loadDrafts(selClient);
       // Auto-fetch senders for this client
+      setSendersLoading(true);
       api('/clients/' + selClient + '/sender-emails')
-        .then(setLocalSenders)
-        .catch(() => {});
+        .then(d => { setLocalSenders(Array.isArray(d) ? d : []); })
+        .catch(() => {})
+        .finally(() => setSendersLoading(false));
     }
   }, [selClient]);
 
@@ -1606,7 +1609,7 @@ function DraftsTab({ clientId, clients, allSenders }) {
 
                   {(!(allSenders&&allSenders.length>0)&&localSenders.length===0) ? (
                     <div style={{fontSize:12,color:T.textMuted,padding:'8px 0'}}>
-                      No senders loaded — go to the Deploy tab first to load senders for this client, then come back here.
+                      {sendersLoading ? 'Loading senders...' : 'No senders found for this client.'}
                     </div>
                   ) : (
                     <div style={{maxHeight:220,overflowY:'auto',
