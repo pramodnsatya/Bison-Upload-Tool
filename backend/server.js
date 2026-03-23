@@ -547,14 +547,29 @@ app.patch('/clients/:id/draft-campaigns/:cid/settings', async (req, res) => {
       patch.timezone            = 'America/New_York';
     }
     if (req.body.plain_text) {
-      patch.plain_text       = true;
+      patch.plain_text        = true;
       patch.plain_text_emails = true;
-      patch.is_plain_text    = true;
-      patch.track_opens      = false;
-      patch.track_clicks     = false;
+      patch.is_plain_text     = true;
+      patch.track_opens       = false;
+      patch.track_clicks      = false;
     }
-    await eb(req.params.id, `/api/campaigns/${req.params.cid}`, 'PATCH', patch);
-    res.json({ ok: true });
+    const errors = [];
+    // Try /api/campaigns/{id}/update first (confirmed working)
+    try {
+      await eb(req.params.id, `/api/campaigns/${req.params.cid}/update`, 'PATCH', patch);
+      return res.json({ ok: true, method: 'update' });
+    } catch(e1) { errors.push(e1.message); }
+    // Fallback: POST to /api/campaigns/{id}
+    try {
+      await eb(req.params.id, `/api/campaigns/${req.params.cid}`, 'POST', patch);
+      return res.json({ ok: true, method: 'post' });
+    } catch(e2) { errors.push(e2.message); }
+    // Fallback: PUT
+    try {
+      await eb(req.params.id, `/api/campaigns/${req.params.cid}`, 'PUT', patch);
+      return res.json({ ok: true, method: 'put' });
+    } catch(e3) { errors.push(e3.message); }
+    res.status(500).json({ error: 'All methods failed', errors });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

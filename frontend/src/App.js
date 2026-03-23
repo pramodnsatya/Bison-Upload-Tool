@@ -1274,13 +1274,20 @@ function DraftsTab({ clientId, clients, allSenders }) {
   const [draftSenders, setDraftSenders] = useState({});
   const [templates, setTemplates] = useState([]);
   const [selClient, setSelClient] = useState(clientId || '');
+  const [localSenders, setLocalSenders] = useState([]);
 
   useEffect(() => {
     api('/templates').then(setTemplates).catch(() => {});
   }, []);
 
   useEffect(() => {
-    if (selClient) loadDrafts(selClient);
+    if (selClient) {
+      loadDrafts(selClient);
+      // Auto-fetch senders for this client
+      api('/clients/' + selClient + '/sender-emails')
+        .then(setLocalSenders)
+        .catch(() => {});
+    }
   }, [selClient]);
 
   async function loadDrafts(cid) {
@@ -1597,14 +1604,14 @@ function DraftsTab({ clientId, clients, allSenders }) {
                     </span>
                   </div>
 
-                  {(!allSenders||allSenders.length===0) ? (
+                  {(!(allSenders&&allSenders.length>0)&&localSenders.length===0) ? (
                     <div style={{fontSize:12,color:T.textMuted,padding:'8px 0'}}>
                       No senders loaded — go to the Deploy tab first to load senders for this client, then come back here.
                     </div>
                   ) : (
                     <div style={{maxHeight:220,overflowY:'auto',
                       border:'1px solid '+T.border,borderRadius:8,background:T.surface}}>
-                      {allSenders.map(s=>{
+                      {((allSenders&&allSenders.length>0)?allSenders:localSenders).map(s=>{
                         const checked=selSend.has(s.id);
                         return (
                           <div key={s.id}
