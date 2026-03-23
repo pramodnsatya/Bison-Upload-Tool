@@ -593,13 +593,10 @@ export default function App() {
       <div style={{ maxWidth:920, margin:'0 auto', padding:'32px 20px 60px' }}>
 
         {/* ── TEMPLATES TAB ──────────────────────────────────────────────── */}
-        {activeTab==='drafts' && <DraftsTab clientId={clientId} clients={clients} allSenders={allSenders}
-          onApplySequence={(campId, steps) => {
-            // Pre-fill copy step and jump to it
-            setEmailSteps(steps);
-            setCreated(prev => prev.find(c=>c.id===campId) ? prev : [...prev, {id:campId, name:'', type:'google', leads:[], senderType:'google'}]);
-          }}
-        />}
+        {activeTab==='drafts' && (() => {
+          try { return <DraftsTab clientId={clientId} clients={clients} allSenders={allSenders} />; }
+          catch(e) { return <div style={{padding:20,color:'red'}}>DraftsTab error: {e.message}</div>; }
+        })()}
         {activeTab==='templates' && <TemplatesTab clientId={clientId} clients={clients} onUseTemplate={tpl => {
           // Strip HTML from bodies, populate emailSteps, switch to deploy/copy
           const steps = tpl.steps.map(s => ({
