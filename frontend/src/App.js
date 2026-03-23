@@ -1264,7 +1264,6 @@ export default function App() {
 // ─── Templates Tab ────────────────────────────────────────────────────────────
 // ─── Drafts Tab ───────────────────────────────────────────────────────────────
 function DraftsTab({ clientId, clients, allSenders }) {
-  const { useState, useEffect } = React;
   const [loading, setLoading] = useState(false);
   const [drafts, setDrafts] = useState([]);
   const [err, setErr] = useState('');
