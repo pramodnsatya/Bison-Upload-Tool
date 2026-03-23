@@ -1267,7 +1267,6 @@ function DraftsTab({ clientId, clients, allSenders }) {
   const [loading, setLoading] = useState(false);
   const [drafts, setDrafts] = useState([]);
   const [err, setErr] = useState('');
-  const [expanded, setExpanded] = useState({});
   const [applying, setApplying] = useState({});
   const [actionDone, setActionDone] = useState({});
   const [draftSteps, setDraftSteps] = useState({});
@@ -1408,7 +1407,6 @@ function DraftsTab({ clientId, clients, allSenders }) {
       )}
 
       {drafts.map(draft => {
-        const isOpen = !!expanded[draft.id];
         const steps = draftSteps[draft.id] || [{subject:'',body:'',delay_days:1}];
         const selSend = draftSenders[draft.id] || new Set();
 
@@ -1417,10 +1415,9 @@ function DraftsTab({ clientId, clients, allSenders }) {
             borderRadius:14,overflow:'hidden'}}>
 
             {/* Header row — click to expand */}
-            <div onClick={()=>setExpanded(p=>({...p,[draft.id]:!p[draft.id]}))}
-              style={{padding:'14px 20px',cursor:'pointer',display:'flex',
+            <div style={{padding:'14px 20px',display:'flex',
                 alignItems:'center',gap:10,flexWrap:'wrap',
-                background:isOpen?T.surfaceAlt:T.surface}}>
+                background:T.surfaceAlt}}>
 
               <span style={{fontWeight:700,fontSize:15,flex:1,minWidth:160}}>{draft.name}</span>
 
@@ -1447,11 +1444,10 @@ function DraftsTab({ clientId, clients, allSenders }) {
                     Ready to launch
                   </span>
               }
-              <span style={{fontSize:16,color:T.textMuted}}>{isOpen?'▲':'▼'}</span>
             </div>
 
-            {/* Expanded panel */}
-            {isOpen && (
+            {/* Always visible panel */}
+            {(
               <div style={{borderTop:'1px solid '+T.border,padding:20,
                 display:'flex',flexDirection:'column',gap:18}}>
 
