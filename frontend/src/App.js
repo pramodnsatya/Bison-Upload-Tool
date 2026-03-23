@@ -570,7 +570,7 @@ export default function App() {
             </div>
             {/* Tab nav */}
             <div style={{ display:'flex', gap:4 }}>
-              {[['deploy','🚀 Deploy'],['templates','📋 Templates']].map(([id,label])=>(
+              {[['deploy','🚀 Deploy'],['drafts','✏️ Manage Drafts'],['templates','📋 Templates']].map(([id,label])=>(
                 <button key={id} onClick={()=>setActiveTab(id)}
                   style={{ padding:'6px 14px', borderRadius:8, border:'none', cursor:'pointer', fontFamily:'inherit',
                     fontSize:13, fontWeight:activeTab===id?600:400, transition:'all .15s',
@@ -593,6 +593,13 @@ export default function App() {
       <div style={{ maxWidth:920, margin:'0 auto', padding:'32px 20px 60px' }}>
 
         {/* ── TEMPLATES TAB ──────────────────────────────────────────────── */}
+        {activeTab==='drafts' && <DraftsTab clientId={clientId} clients={clients} allSenders={allSenders}
+          onApplySequence={(campId, steps) => {
+            // Pre-fill copy step and jump to it
+            setEmailSteps(steps);
+            setCreated(prev => prev.find(c=>c.id===campId) ? prev : [...prev, {id:campId, name:'', type:'google', leads:[], senderType:'google'}]);
+          }}
+        />}
         {activeTab==='templates' && <TemplatesTab clientId={clientId} clients={clients} onUseTemplate={tpl => {
           // Strip HTML from bodies, populate emailSteps, switch to deploy/copy
           const steps = tpl.steps.map(s => ({
@@ -1258,6 +1265,388 @@ export default function App() {
 }
 
 // ─── Templates Tab ────────────────────────────────────────────────────────────
+// ─── Drafts Tab ───────────────────────────────────────────────────────────────
+function DraftsTab({ clientId, clients, allSenders }) {
+  const [loading, setLoading] = React.useState(false);
+  const [drafts, setDrafts] = React.useState([]);
+  const [err, setErr] = React.useState('');
+  const [expanded, setExpanded] = React.useState({});
+  const [applying, setApplying] = React.useState({});
+  const [done, setDone] = React.useState({});
+  const [draftSteps, setDraftSteps] = React.useState({});
+  const [draftSenders, setDraftSenders] = React.useState({});
+  const [templates, setTemplates] = React.useState([]);
+  const [selClient, setSelClient] = React.useState(clientId || '');
+
+  const T2 = { bg:'#F7F5F0', surface:'#FFFFFF', border:'#E5E0D8', text:'#1A1A1A',
+    textSub:'#6B7280', textMuted:'#9CA3AF', indigo:'#4F46E5', indigoLight:'#EEF2FF',
+    success:'#059669', error:'#DC2626', warning:'#D97706', surfaceAlt:'#F3F0EB' };
+
+  React.useEffect(() => {
+    if (selClient) loadDrafts(selClient);
+    api('/templates').then(setTemplates).catch(() => {});
+  }, [selClient]);
+
+  async function loadDrafts(cid) {
+    setLoading(true); setErr(''); setDrafts([]);
+    try { setDrafts(await api('/clients/' + cid + '/draft-campaigns')); }
+    catch(e) { setErr(e.message); }
+    finally { setLoading(false); }
+  }
+
+  async function applySettings(draft) {
+    const key = draft.id + '_cfg';
+    setApplying(p => ({...p, [key]: true}));
+    try {
+      await api('/clients/' + selClient + '/draft-campaigns/' + draft.id + '/settings', {
+        method: 'PATCH',
+        body: JSON.stringify({ schedule: !draft.has_schedule, plain_text: !draft.is_plain_text }),
+      });
+      setDone(p => ({...p, [key]: true}));
+      loadDrafts(selClient);
+    } catch(e) { setErr(e.message); }
+    finally { setApplying(p => ({...p, [key]: false})); }
+  }
+
+  async function applySequence(draft) {
+    const key = draft.id + '_seq';
+    const steps = (draftSteps[draft.id] || []).filter(s => s.subject.trim() || s.body.trim());
+    if (!steps.length) { setErr('Add at least one email step with subject or body.'); return; }
+    setApplying(p => ({...p, [key]: true}));
+    try {
+      await api('/clients/' + selClient + '/campaigns/' + draft.id + '/sequence', {
+        method: 'POST', body: JSON.stringify({ steps }),
+      });
+      setDone(p => ({...p, [key]: true}));
+      loadDrafts(selClient);
+    } catch(e) { setErr(e.message); }
+    finally { setApplying(p => ({...p, [key]: false})); }
+  }
+
+  async function applySenders(draft) {
+    const key = draft.id + '_snd';
+    const ids = [...(draftSenders[draft.id] || new Set())];
+    if (!ids.length) { setErr('Select at least one sender.'); return; }
+    setApplying(p => ({...p, [key]: true}));
+    try {
+      await api('/clients/' + selClient + '/campaigns/' + draft.id + '/senders', {
+        method: 'POST', body: JSON.stringify({ senderIds: ids }),
+      });
+      setDone(p => ({...p, [key]: true}));
+      loadDrafts(selClient);
+    } catch(e) { setErr(e.message); }
+    finally { setApplying(p => ({...p, [key]: false})); }
+  }
+
+  function loadTemplate(draftId, tpl) {
+    const steps = tpl.steps.map(s => ({
+      subject: s.subject || s.email_subject || '',
+      body: stripHtml(s.body || s.email_body || ''),
+      delay_days: Math.max(1, s.delay_days || 1),
+    }));
+    setDraftSteps(p => ({...p, [draftId]: steps}));
+  }
+
+  const statusBadge = (ok, okText, noText) => (
+    <span style={{ fontSize:11, fontWeight:600, padding:'2px 8px', borderRadius:999,
+      background: ok ? '#DCFCE7' : '#FEF3C7', color: ok ? '#15803D' : '#92400E' }}>
+      {ok ? ('checkmark ' + okText) : ('warn ' + noText)}
+    </span>
+  );
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+      {/* Header */}
+      <div style={{ display:'flex', alignItems:'flex-start', gap:12, flexWrap:'wrap' }}>
+        <div style={{ flex:1 }}>
+          <h2 style={{ fontSize:20, fontWeight:700, marginBottom:4 }}>Manage Draft Campaigns</h2>
+          <p style={{ fontSize:13, color:T2.textSub, margin:0 }}>
+            Finish configuring partially-set-up campaigns. Each card shows what is done and what still needs doing.
+          </p>
+        </div>
+        <div style={{ display:'flex', gap:8 }}>
+          <select value={selClient} onChange={e => setSelClient(e.target.value)}
+            style={{ padding:'7px 12px', border:'1.5px solid ' + T2.border, borderRadius:8,
+              fontSize:13, fontFamily:'inherit', background:'#fff', outline:'none' }}>
+            <option value="">Select client...</option>
+            {(clients || []).map(cl => (
+              <option key={cl.id} value={cl.id}>{cl.name}</option>
+            ))}
+          </select>
+          <button onClick={() => loadDrafts(selClient)} disabled={!selClient || loading}
+            style={{ padding:'7px 14px', background:T2.indigo, color:'#fff', border:'none',
+              borderRadius:8, fontSize:13, fontWeight:600, cursor:'pointer', fontFamily:'inherit',
+              opacity: (!selClient || loading) ? 0.5 : 1 }}>
+            {loading ? 'Loading...' : 'Refresh'}
+          </button>
+        </div>
+      </div>
+
+      {err && (
+        <div style={{ background:'#FEF2F2', border:'1px solid #FECACA', borderRadius:10,
+          padding:'10px 16px', fontSize:13, color:T2.error }}>
+          {err}
+        </div>
+      )}
+
+      {!loading && drafts.length === 0 && selClient && !err && (
+        <div style={{ textAlign:'center', padding:'48px', color:T2.textMuted, fontSize:14 }}>
+          No draft campaigns found for this client.
+        </div>
+      )}
+
+      {drafts.map(draft => {
+        const isOpen = !!expanded[draft.id];
+        const steps = draftSteps[draft.id] || [{subject:'', body:'', delay_days:1}];
+        const selSend = draftSenders[draft.id] || new Set();
+
+        return (
+          <div key={draft.id} style={{ background:'#fff', border:'1.5px solid ' + T2.border,
+            borderRadius:14, overflow:'hidden', transition:'box-shadow .2s' }}>
+
+            {/* ── Campaign header row ── */}
+            <div onClick={() => setExpanded(p => ({...p, [draft.id]: !p[draft.id]}))}
+              style={{ padding:'14px 20px', cursor:'pointer', display:'flex',
+                alignItems:'center', gap:10, flexWrap:'wrap',
+                background: isOpen ? T2.surfaceAlt : '#fff' }}>
+
+              <span style={{ fontWeight:700, fontSize:15, flex:1, minWidth:160 }}>
+                {draft.name}
+              </span>
+
+              {/* Status chips */}
+              <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+                {[
+                  {label:'Leads',    ok:draft.has_leads,    detail: draft.leads_count + ' leads'},
+                  {label:'Sequence', ok:draft.has_sequence, detail: draft.sequence_count + ' steps'},
+                  {label:'Senders',  ok:draft.has_senders,  detail: draft.sender_count + ' senders'},
+                  {label:'Schedule', ok:draft.has_schedule, detail:'Set'},
+                  {label:'Plain txt',ok:draft.is_plain_text,detail:'On'},
+                ].map(({label, ok, detail}) => (
+                  <span key={label} style={{ fontSize:11, fontWeight:600, padding:'2px 8px', borderRadius:999,
+                    background: ok ? '#DCFCE7' : '#FEF3C7', color: ok ? '#15803D' : '#92400E' }}>
+                    {ok ? '✓' : '!'} {label}{ok ? ' (' + detail + ')' : ''}
+                  </span>
+                ))}
+              </div>
+
+              {draft.todo.length > 0 ? (
+                <span style={{ fontSize:11, fontWeight:700, padding:'3px 10px', borderRadius:999,
+                  background:'#FEF2F2', color:T2.error, flexShrink:0 }}>
+                  {draft.todo.length} action{draft.todo.length > 1 ? 's' : ''} needed
+                </span>
+              ) : (
+                <span style={{ fontSize:11, fontWeight:700, padding:'3px 10px', borderRadius:999,
+                  background:'#DCFCE7', color:'#15803D', flexShrink:0 }}>
+                  Ready to launch
+                </span>
+              )}
+
+              <span style={{ fontSize:16, color:T2.textMuted }}>{isOpen ? '▲' : '▼'}</span>
+            </div>
+
+            {/* ── Expanded panel ── */}
+            {isOpen && (
+              <div style={{ borderTop:'1px solid ' + T2.border, padding:20,
+                display:'flex', flexDirection:'column', gap:18 }}>
+
+                {/* Settings */}
+                <div style={{ background:T2.surfaceAlt, borderRadius:10, padding:'14px 16px' }}>
+                  <div style={{ fontWeight:600, fontSize:14, marginBottom:10 }}>Settings</div>
+                  <div style={{ display:'flex', gap:16, alignItems:'center', flexWrap:'wrap' }}>
+                    <span style={{ fontSize:13, color:T2.textSub }}>
+                      Schedule:{' '}
+                      <strong style={{ color: draft.has_schedule ? T2.success : T2.warning }}>
+                        {draft.has_schedule ? 'Mon-Fri 8AM-7PM ET' : 'Not set'}
+                      </strong>
+                    </span>
+                    <span style={{ fontSize:13, color:T2.textSub }}>
+                      Plain text:{' '}
+                      <strong style={{ color: draft.is_plain_text ? T2.success : T2.warning }}>
+                        {draft.is_plain_text ? 'On' : 'Off'}
+                      </strong>
+                    </span>
+                    {(!draft.has_schedule || !draft.is_plain_text) && (
+                      <button disabled={!!applying[draft.id + '_cfg']}
+                        onClick={() => applySettings(draft)}
+                        style={{ marginLeft:'auto', padding:'7px 14px', background:T2.indigo,
+                          color:'#fff', border:'none', borderRadius:8, fontSize:12,
+                          fontWeight:600, cursor:'pointer', fontFamily:'inherit',
+                          opacity: applying[draft.id + '_cfg'] ? 0.6 : 1 }}>
+                        {applying[draft.id + '_cfg'] ? 'Applying...' : 'Apply Missing Settings'}
+                      </button>
+                    )}
+                    {done[draft.id + '_cfg'] && (
+                      <span style={{ fontSize:12, color:T2.success, fontWeight:600 }}>Applied</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Sequence editor */}
+                <div style={{ background:T2.surfaceAlt, borderRadius:10, padding:'14px 16px' }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:12, flexWrap:'wrap' }}>
+                    <div style={{ fontWeight:600, fontSize:14 }}>Email Sequence</div>
+                    <span style={{ fontSize:11, fontWeight:600,
+                      color: draft.has_sequence ? T2.success : T2.warning }}>
+                      {draft.has_sequence
+                        ? ('Already has ' + draft.sequence_count + ' steps — editing will replace them')
+                        : 'Not configured'}
+                    </span>
+                    {templates.length > 0 && (
+                      <select defaultValue=""
+                        onChange={e => { const t = templates.find(x => x.id === e.target.value); if (t) loadTemplate(draft.id, t); e.target.value = ''; }}
+                        style={{ marginLeft:'auto', padding:'5px 10px', border:'1.5px solid ' + T2.border,
+                          borderRadius:7, fontSize:12, fontFamily:'inherit', background:'#fff', outline:'none', cursor:'pointer' }}>
+                        <option value="" disabled>Load template...</option>
+                        {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                      </select>
+                    )}
+                  </div>
+
+                  <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+                    {steps.map((s, i) => (
+                      <div key={i} style={{ background:'#fff', border:'1px solid ' + T2.border, borderRadius:9, overflow:'hidden' }}>
+                        <div style={{ padding:'7px 12px', background: i===0 ? '#EEF2FF' : '#F0FDF4',
+                          borderBottom:'1px solid ' + T2.border, display:'flex', alignItems:'center', gap:8 }}>
+                          <span style={{ fontWeight:700, fontSize:12,
+                            color: i===0 ? T2.indigo : T2.success }}>
+                            {i === 0 ? 'Email 1 — Initial outreach' : 'Follow-up ' + i}
+                          </span>
+                          {i > 0 && (
+                            <div style={{ display:'flex', alignItems:'center', gap:6, marginLeft:'auto' }}>
+                              <span style={{ fontSize:11, color:T2.textMuted }}>Day</span>
+                              <input type="number" min={1} value={s.delay_days}
+                                onChange={e => setDraftSteps(p => ({...p, [draft.id]: steps.map((x,j) => j===i ? {...x, delay_days: parseInt(e.target.value)||1} : x)}))}
+                                style={{ width:44, padding:'2px 6px', border:'1px solid ' + T2.border,
+                                  borderRadius:5, fontSize:12, textAlign:'center', fontFamily:'inherit', outline:'none' }} />
+                              <button onClick={() => setDraftSteps(p => ({...p, [draft.id]: steps.filter((_,j) => j!==i)}))}
+                                style={{ background:'none', border:'none', cursor:'pointer', fontSize:16, color:T2.textMuted, lineHeight:1, padding:0 }}>
+                                x
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ padding:'10px 12px', display:'flex', flexDirection:'column', gap:7 }}>
+                          <input value={s.subject} placeholder="Subject line..."
+                            onChange={e => setDraftSteps(p => ({...p, [draft.id]: steps.map((x,j) => j===i ? {...x, subject: e.target.value} : x)}))}
+                            style={{ width:'100%', padding:'7px 10px', border:'1px solid ' + T2.border,
+                              borderRadius:7, fontSize:13, fontFamily:'inherit', outline:'none' }} />
+                          <textarea rows={5} value={s.body} placeholder="Email body..."
+                            onChange={e => setDraftSteps(p => ({...p, [draft.id]: steps.map((x,j) => j===i ? {...x, body: e.target.value} : x)}))}
+                            style={{ width:'100%', padding:'7px 10px', border:'1px solid ' + T2.border,
+                              borderRadius:7, fontSize:12, fontFamily:'ui-monospace,monospace',
+                              outline:'none', resize:'vertical', lineHeight:1.6 }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ display:'flex', gap:8, marginTop:10, alignItems:'center' }}>
+                    {steps.length < 5 && (
+                      <button onClick={() => setDraftSteps(p => ({...p, [draft.id]: [...steps, {subject:'', body:'', delay_days: steps.length * 3}]}))}
+                        style={{ padding:'7px 14px', border:'1.5px dashed ' + T2.border, borderRadius:8,
+                          background:'transparent', fontSize:12, cursor:'pointer', color:T2.textSub,
+                          fontFamily:'inherit', fontWeight:600 }}>
+                        + Follow-up
+                      </button>
+                    )}
+                    <button disabled={!!applying[draft.id + '_seq'] || !steps.some(s => s.subject.trim() || s.body.trim())}
+                      onClick={() => applySequence(draft)}
+                      style={{ marginLeft:'auto', padding:'7px 16px', background:T2.indigo, color:'#fff',
+                        border:'none', borderRadius:8, fontSize:12, fontWeight:600,
+                        cursor:'pointer', fontFamily:'inherit',
+                        opacity: (applying[draft.id + '_seq'] || !steps.some(s => s.subject.trim() || s.body.trim())) ? 0.5 : 1 }}>
+                      {applying[draft.id + '_seq'] ? 'Applying...' : draft.has_sequence ? 'Update Sequence' : 'Apply Sequence'}
+                    </button>
+                    {done[draft.id + '_seq'] && (
+                      <span style={{ fontSize:12, color:T2.success, fontWeight:600 }}>Applied</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Senders */}
+                <div style={{ background:T2.surfaceAlt, borderRadius:10, padding:'14px 16px' }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:10, flexWrap:'wrap' }}>
+                    <div style={{ fontWeight:600, fontSize:14 }}>Sender Emails</div>
+                    <span style={{ fontSize:11, fontWeight:600,
+                      color: draft.has_senders ? T2.success : T2.warning }}>
+                      {draft.has_senders
+                        ? (draft.sender_count + ' currently assigned')
+                        : 'None assigned yet'}
+                    </span>
+                    <span style={{ marginLeft:'auto', fontSize:12, color:T2.textMuted }}>
+                      {selSend.size} selected
+                    </span>
+                  </div>
+
+                  {(!allSenders || allSenders.length === 0) ? (
+                    <div style={{ fontSize:12, color:T2.textMuted, padding:'8px 0' }}>
+                      No sender data loaded. Go to the Deploy tab first to load senders for this client, then come back here.
+                    </div>
+                  ) : (
+                    <div style={{ maxHeight:220, overflowY:'auto', border:'1px solid ' + T2.border,
+                      borderRadius:8, background:'#fff' }}>
+                      {allSenders.map(s => {
+                        const checked = selSend.has(s.id);
+                        return (
+                          <div key={s.id}
+                            onClick={() => setDraftSenders(p => {
+                              const ns = new Set(p[draft.id] || []);
+                              checked ? ns.delete(s.id) : ns.add(s.id);
+                              return {...p, [draft.id]: ns};
+                            })}
+                            style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px',
+                              cursor:'pointer', borderBottom:'1px solid #F3F0EB',
+                              background: checked ? '#EEF2FF' : 'transparent' }}>
+                            <div style={{ width:15, height:15, borderRadius:3, flexShrink:0,
+                              border:'2px solid ' + (checked ? T2.indigo : '#D1D5DB'),
+                              background: checked ? T2.indigo : 'transparent',
+                              display:'flex', alignItems:'center', justifyContent:'center' }}>
+                              {checked && <span style={{ color:'#fff', fontSize:8, fontWeight:700 }}>v</span>}
+                            </div>
+                            <span style={{ fontSize:12, flex:1 }}>{s.email}</span>
+                            <span style={{ fontSize:11, padding:'1px 6px', borderRadius:4, fontWeight:600,
+                              background: s.provider==='google'?'#EFF6FF':s.provider==='outlook'?'#FFF7ED':'#F3F4F6',
+                              color: s.provider==='google'?'#3B5BDB':s.provider==='outlook'?'#C2410C':'#6B7280' }}>
+                              {s.provider==='google'?'G':s.provider==='outlook'?'O':'?'}
+                            </span>
+                            <span style={{ fontSize:11, color: s.warmup_score >= 80 ? T2.success : T2.textMuted }}>
+                              {s.warmup_score != null ? s.warmup_score : '--'}
+                            </span>
+                            <span style={{ fontSize:11, color: s.active_campaign_count > 0 ? T2.warning : T2.textMuted }}>
+                              {s.active_campaign_count > 0 ? (s.active_campaign_count + ' camps') : 'free'}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <div style={{ display:'flex', gap:8, marginTop:10, alignItems:'center' }}>
+                    <button disabled={!!applying[draft.id + '_snd'] || selSend.size === 0}
+                      onClick={() => applySenders(draft)}
+                      style={{ marginLeft:'auto', padding:'7px 16px', background:T2.success,
+                        color:'#fff', border:'none', borderRadius:8, fontSize:12, fontWeight:600,
+                        cursor:'pointer', fontFamily:'inherit',
+                        opacity: (applying[draft.id + '_snd'] || selSend.size === 0) ? 0.5 : 1 }}>
+                      {applying[draft.id + '_snd'] ? 'Assigning...' : draft.has_senders ? 'Update Senders' : 'Assign Senders'}
+                    </button>
+                    {done[draft.id + '_snd'] && (
+                      <span style={{ fontSize:12, color:T2.success, fontWeight:600 }}>Assigned</span>
+                    )}
+                  </div>
+                </div>
+
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+
 function TemplatesTab({ clientId, clients, onUseTemplate }) {
   const [templates,    setTemplates]    = useState([]);
   const [tab,          setTab]          = useState('saved'); // 'saved' | 'pull'

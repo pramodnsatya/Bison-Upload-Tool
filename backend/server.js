@@ -133,11 +133,8 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
 
       details.forEach(raw => {
         const c = raw.data || raw;
-        // Exclude paused, draft, completed, cancelled — only count truly active/sending campaigns
-        const isPaused = c.status === 'paused' || c.status === 'draft' ||
-                         c.status === 'completed' || c.status === 'cancelled' || c.status === 'stopped';
-        const isActive = !isPaused && (c.status === 'active' || c.status === 'running' ||
-                         c.status === 'sending' || !c.status);
+        // Only count active/running/sending — exclude draft, paused, completed, cancelled
+        const isActive = c.status === 'active' || c.status === 'running' || c.status === 'sending';
         const ids = c.sender_email_ids || c.sender_emails?.map(s => s.id) || [];
         ids.forEach(id => {
           const sid = String(id);
@@ -479,3 +476,91 @@ if (existsSync(buildPath)) {
 
 const PORT = process.env.PORT || 3847;
 app.listen(PORT, () => console.log(`✅ Server on port ${PORT}`));
+
+// ── Draft Campaign Manager ────────────────────────────────────────────────────
+// Fetch all draft campaigns and inspect what's done vs missing
+app.get('/clients/:id/draft-campaigns', async (req, res) => {
+  try {
+    // Get all campaigns, filter to drafts
+    const d = await eb(req.params.id, '/api/campaigns?per_page=200');
+    const all = Array.isArray(d) ? d : (d.data || []);
+    const drafts = all.filter(c => {
+      const s = (c.status || '').toLowerCase();
+      return s === 'draft' || s === '' || s === 'inactive' || !c.status;
+    });
+
+    // Fetch details for each draft in parallel (cap at 50)
+    const slice = drafts.slice(0, 50);
+    const details = await Promise.all(
+      slice.map(c => eb(req.params.id, `/api/campaigns/${c.id}`).catch(() => ({ data: c })))
+    );
+
+    const result = details.map(raw => {
+      const c = raw.data || raw;
+
+      // Inspect what's already configured
+      const hasLeads     = (c.leads_count ?? c.total_leads ?? 0) > 0;
+      const hasSequence  = (c.sequence_steps_count ?? c.sequence_steps?.length ?? 0) > 0;
+      const hasSenders   = (c.sender_email_ids?.length ?? c.sender_emails?.length ?? 0) > 0;
+      const hasSchedule  = !!(c.sending_days?.length || c.sending_hours_start);
+      const isPlainText  = !!(c.plain_text || c.plain_text_emails || c.is_plain_text);
+      const trackingOff  = !c.track_opens && !c.track_clicks;
+
+      // What still needs doing
+      const todo = [];
+      if (!hasSequence) todo.push('sequence');
+      if (!hasSenders)  todo.push('senders');
+      if (!hasSchedule) todo.push('schedule');
+      if (!isPlainText) todo.push('plain_text');
+
+      return {
+        id:           c.id,
+        name:         c.name,
+        status:       c.status || 'draft',
+        created_at:   c.created_at,
+        // What's done
+        has_leads:    hasLeads,
+        has_sequence: hasSequence,
+        has_senders:  hasSenders,
+        has_schedule: hasSchedule,
+        is_plain_text: isPlainText,
+        tracking_off: trackingOff,
+        leads_count:  c.leads_count ?? c.total_leads ?? 0,
+        sender_count: c.sender_email_ids?.length ?? c.sender_emails?.length ?? 0,
+        sequence_count: c.sequence_steps_count ?? c.sequence_steps?.length ?? 0,
+        // What still needs doing
+        todo,
+        // Raw for reference
+        sending_days: c.sending_days,
+        sending_hours_start: c.sending_hours_start,
+        sending_hours_end: c.sending_hours_end,
+      };
+    });
+
+    // Sort: most todo first, then alphabetical
+    result.sort((a, b) => b.todo.length - a.todo.length || a.name.localeCompare(b.name));
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Apply settings to an existing draft campaign
+app.patch('/clients/:id/draft-campaigns/:cid/settings', async (req, res) => {
+  try {
+    const patch = {};
+    if (req.body.schedule) {
+      patch.sending_days        = ['monday','tuesday','wednesday','thursday','friday'];
+      patch.sending_hours_start = '08:00';
+      patch.sending_hours_end   = '19:00';
+      patch.timezone            = 'America/New_York';
+    }
+    if (req.body.plain_text) {
+      patch.plain_text       = true;
+      patch.plain_text_emails = true;
+      patch.is_plain_text    = true;
+      patch.track_opens      = false;
+      patch.track_clicks     = false;
+    }
+    await eb(req.params.id, `/api/campaigns/${req.params.cid}`, 'PATCH', patch);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
