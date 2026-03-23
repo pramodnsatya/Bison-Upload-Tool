@@ -470,13 +470,6 @@ app.get('/clients/:id/campaigns/search', async (req, res) => {
 // ── Serve React build (production / Railway) ──────────────────────────────────
 const buildPath = join(__dirname, '../frontend/build');
 if (existsSync(buildPath)) {
-  app.use(express.static(buildPath));
-  app.get('*', (_req, res) => res.sendFile(join(buildPath, 'index.html')));
-}
-
-const PORT = process.env.PORT || 3847;
-app.listen(PORT, () => console.log(`✅ Server on port ${PORT}`));
-
 // ── Draft Campaign Manager ────────────────────────────────────────────────────
 // Fetch all draft campaigns and inspect what's done vs missing
 app.get('/clients/:id/draft-campaigns', async (req, res) => {
@@ -564,3 +557,11 @@ app.patch('/clients/:id/draft-campaigns/:cid/settings', async (req, res) => {
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+
+  app.use(express.static(buildPath));
+  app.get('*', (_req, res) => res.sendFile(join(buildPath, 'index.html')));
+}
+
+const PORT = process.env.PORT || 3847;
+app.listen(PORT, () => console.log(`✅ Server on port ${PORT}`));
