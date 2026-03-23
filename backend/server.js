@@ -191,6 +191,14 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Debug: see what a campaign's schedule looks like
+app.get('/clients/:id/campaigns/:cid/schedule-debug', async (req, res) => {
+  try {
+    const d = await eb(req.params.id, `/api/campaigns/${req.params.cid}/schedule`);
+    res.json(d);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Debug: see raw fields from a campaign GET to learn correct field names
 app.get('/clients/:id/campaigns/debug', async (req, res) => {
   try {
@@ -212,40 +220,47 @@ app.get('/clients/:id/campaigns/debug', async (req, res) => {
 
 app.post('/clients/:id/campaigns', async (req, res) => {
   try {
-    // Create campaign with all known plain text / tracking field names
-    // (EmailBison field names vary slightly across instances)
-    const d = await eb(req.params.id, '/api/campaigns', 'POST', {
-      name:              req.body.name,
-      // Plain text — try all known variants
-      plain_text:        true,
-      plain_text_emails: true,
-      is_plain_text:     true,
-      // Tracking — off for deliverability
-      track_opens:       false,
-      track_clicks:      false,
-      tracking_opens:    false,
-      tracking_clicks:   false,
-    });
+    // Step 1: Create campaign
+    const d = await eb(req.params.id, '/api/campaigns', 'POST', { name: req.body.name });
     const id = d.id || d.data?.id || d.campaign?.id;
+    if (!id) throw new Error('No campaign ID returned from create');
 
-    // Apply schedule + settings via PATCH (more reliable than creation payload)
+    // Step 2: Update settings via confirmed PATCH /api/campaigns/{id}/update endpoint
     try {
-      await eb(req.params.id, `/api/campaigns/${id}`, 'PATCH', {
-        // Schedule
-        sending_days:         ['monday','tuesday','wednesday','thursday','friday'],
-        sending_hours_start:  '08:00',
-        sending_hours_end:    '19:00',
-        timezone:             'America/New_York',
-        // Plain text + tracking — re-apply in PATCH in case POST ignored them
-        plain_text:           true,
-        plain_text_emails:    true,
-        is_plain_text:        true,
-        track_opens:          false,
-        track_clicks:         false,
-        tracking_opens:       false,
-        tracking_clicks:      false,
+      await eb(req.params.id, `/api/campaigns/${id}/update`, 'PATCH', {
+        plain_text:  true,
+        track_opens: false,
+        track_clicks: false,
       });
-    } catch (_) {}
+    } catch (_) {
+      // Fallback: try plain PATCH on the campaign
+      try {
+        await eb(req.params.id, `/api/campaigns/${id}`, 'PATCH', {
+          plain_text: true, track_opens: false, track_clicks: false,
+        });
+      } catch (_) {}
+    }
+
+    // Step 3: Set schedule via dedicated schedule endpoint
+    // POST /api/campaigns/{id}/schedule
+    try {
+      await eb(req.params.id, `/api/campaigns/${id}/schedule`, 'POST', {
+        days_of_week:  ['monday','tuesday','wednesday','thursday','friday'],
+        start_time:    '08:00',
+        end_time:      '19:00',
+        timezone:      'America/New_York',
+      });
+    } catch (_) {
+      // Fallback with alternate field names
+      try {
+        await eb(req.params.id, `/api/campaigns/${id}/schedule`, 'POST', {
+          sending_days:        ['monday','tuesday','wednesday','thursday','friday'],
+          sending_hours_start: '08:00',
+          sending_hours_end:   '19:00',
+          timezone:            'America/New_York',
+        });
+      } catch (_) {}
+    }
 
     res.json({ id, name: req.body.name });
   } catch (e) { res.status(500).json({ error: e.message }); }
