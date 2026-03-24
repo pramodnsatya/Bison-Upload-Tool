@@ -147,33 +147,27 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
       const listRes = await eb(req.params.id, '/api/campaigns?per_page=20&sort=created_at&order=desc');
       const campList = Array.isArray(listRes) ? listRes : (listRes.data || []);
 
-      // Step 2: fetch each campaign detail in parallel to get sender_email_ids
-      const details = await Promise.all(
-        campList.map(c =>
-          eb(req.params.id, `/api/campaigns/${c.id}`).catch(() => c) // fall back to list data on error
-        )
+      // Step 2: fetch sender emails per campaign via dedicated endpoint
+      // Campaign detail doesn't include sender IDs — use per-campaign sender-emails endpoint
+      await Promise.all(
+        campList.map(async camp => {
+          const st = (camp.status || '').toLowerCase();
+          const isActive = st === 'active' || st === 'running' || st === 'sending' || st === 'launched';
+          try {
+            const sndRes = await eb(req.params.id, `/api/campaigns/${camp.id}/sender-emails`);
+            const snds = Array.isArray(sndRes) ? sndRes : (sndRes.data || []);
+            snds.forEach(s => {
+              const sid = String(s.id ?? s);
+              senderCampaignCount[sid] = (senderCampaignCount[sid] || 0) + 1;
+              if (isActive) activeCampaignSenders.add(sid);
+            });
+          } catch(_) {
+            // Endpoint not found — skip, count stays 0 for this campaign
+          }
+        })
       );
 
-      details.forEach(raw => {
-        // Handle both wrapped {data: {...}} and unwrapped responses
-        const c = raw.data || raw;
-        const st = (c.status || '').toLowerCase();
-        const isActive = st === 'active' || st === 'running' || st === 'sending' || st === 'launched';
-
-        // Try every possible field name for sender IDs
-        let ids = [];
-        if (Array.isArray(c.sender_email_ids)) ids = c.sender_email_ids;
-        else if (Array.isArray(c.sender_emails)) ids = c.sender_emails.map(s => s.id ?? s);
-        else if (Array.isArray(c.senders)) ids = c.senders.map(s => s.id ?? s);
-        else if (Array.isArray(c.email_accounts)) ids = c.email_accounts.map(s => s.id ?? s);
-
-        ids.forEach(id => {
-          const sid = String(id);
-          senderCampaignCount[sid] = (senderCampaignCount[sid] || 0) + 1;
-          if (isActive) activeCampaignSenders.add(sid);
-        });
-      });
-    } catch (_) {}
+        } catch (_) {}
 
     const enriched = senders.map(s => {
       const wu = warmupMap[s.id] || {};
@@ -673,6 +667,19 @@ app.get('/clients/:id/campaigns/:cid/detail-debug', async (req, res) => {
         k.toLowerCase().includes('sender') || k.toLowerCase().includes('email_account') || k.toLowerCase().includes('inbox')
       ).reduce((acc, [k,v]) => ({...acc, [k]:v}), {}),
     });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Debug: check /api/campaigns/{id}/sender-emails endpoint
+app.get('/clients/:id/campaigns/:cid/senders-debug', async (req, res) => {
+  try {
+    // Find numeric ID first
+    const list = await eb(req.params.id, '/api/campaigns?per_page=200');
+    const arr = Array.isArray(list) ? list : (list.data || []);
+    const camp = arr.find(c => c.uuid === req.params.cid || String(c.id) === req.params.cid) || arr.find(c=>c.status==='active');
+    if (!camp) return res.json({error:'no campaign found'});
+    const r = await eb(req.params.id, `/api/campaigns/${camp.id}/sender-emails`);
+    res.json({ campaign_id: camp.id, campaign_name: camp.name, response_keys: Object.keys(r), data: Array.isArray(r)?r.slice(0,3):(r.data||[]).slice(0,3) });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
