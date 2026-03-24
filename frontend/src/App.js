@@ -1165,6 +1165,7 @@ export default function App() {
                                 </div>
                               </td>
                               <td style={{ padding:'8px 12px', fontSize:12 }}>
+                                {s.name && <div style={{fontSize:11,color:T.textMuted,marginBottom:1}}>{s.name}</div>}
                                 {s.email}
                               </td>
                               <td style={{ padding:'8px 8px', textAlign:'right', fontWeight:600, fontSize:12, color:scColor }}>{sc??'—'}</td>
@@ -1720,7 +1721,10 @@ function DraftsTab({ clientId, clients, allSenders }) {
                               {checked&&<span style={{color:'#fff',fontSize:8,fontWeight:700}}>✓</span>}
                             </div>
                           </td>
-                          <td style={{padding:'8px 12px',fontSize:12}}>{s.email}</td>
+                          <td style={{padding:'8px 12px',fontSize:12}}>
+                            {s.name && <div style={{fontSize:11,color:T.textMuted,marginBottom:1}}>{s.name}</div>}
+                            {s.email}
+                          </td>
                           <td style={{padding:'8px 8px',textAlign:'right',fontWeight:600,fontSize:12,color:scColor}}>{sc??'—'}</td>
                           <td style={{padding:'8px 8px',textAlign:'right',fontSize:12,color:T.textSub}}>{s.warmup_sent!=null?Number(s.warmup_sent).toLocaleString():'—'}</td>
                           <td style={{padding:'8px 8px',textAlign:'right',fontSize:12,color:T.textSub}}>{s.emails_sent!=null?Number(s.emails_sent).toLocaleString():'—'}</td>
