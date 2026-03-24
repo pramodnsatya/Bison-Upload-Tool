@@ -346,7 +346,27 @@ function CampaignSequencePicker({ clientId, onSelect }) {
   );
 }
 
-export default function App() {
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(e) { return { error: e }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{padding:40,fontFamily:'sans-serif',background:'#FEF2F2',minHeight:'100vh'}}>
+          <h2 style={{color:'#DC2626',marginBottom:8}}>Something went wrong</h2>
+          <p style={{color:'#7F1D1D',fontSize:14,marginBottom:16}}>{String(this.state.error?.message||this.state.error)}</p>
+          <button onClick={()=>window.location.reload()}
+            style={{padding:'8px 16px',background:'#DC2626',color:'#fff',border:'none',borderRadius:8,cursor:'pointer',fontSize:14}}>
+            Reload
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function AppInner() {
   const [step, setStep]     = useState(1);
   const [activeTab, setActiveTab] = useState('deploy'); // 'deploy' | 'templates'
   const [log,  setLog]      = useState([]);
@@ -390,7 +410,7 @@ export default function App() {
     setLoading(true); clearErr();
     try {
       const r = await api(`/clients/${clientId}/test`);
-      setConnStatus('ok'); addLog(`Connected — ${r.message}`,'success'); setStep(2);
+      setConnStatus('ok'); addLog(`Connected — ${String(r.message||r.status||'OK')}`,'success'); setStep(2);
     } catch(e) { setError(e.message); setConnStatus('error'); }
     finally { setLoading(false); }
   }
@@ -1884,3 +1904,7 @@ function DraftsTab({ clientId, clients, allSenders }) {
   );
 }
 
+
+export default function App() {
+  return <ErrorBoundary><AppInner /></ErrorBoundary>;
+}
