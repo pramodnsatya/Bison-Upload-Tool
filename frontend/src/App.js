@@ -390,7 +390,7 @@ export default function App() {
     setLoading(true); clearErr();
     try {
       const r = await api(`/clients/${clientId}/test`);
-      setConnStatus('ok'); addLog(`Connected — ${String(r.message||r.status||'OK')}`,'success'); setStep(2);
+      setConnStatus('ok'); addLog(`Connected — ${r.message}`,'success'); setStep(2);
     } catch(e) { setError(e.message); setConnStatus('error'); }
     finally { setLoading(false); }
   }
@@ -513,8 +513,15 @@ export default function App() {
       const senders = await api(`/clients/${clientId}/sender-emails`);
       const list = Array.isArray(senders) ? senders : [];
       setAllSenders(list);
-      // Don't auto-select senders — let user pick manually in Step 7
-      setSelSenders({});
+      const sel = {};
+      for (const c of created) {
+        const pool = list.filter(c.senderType==='outlook'?isOutlookSender:isGoogleSender).sort((a,b)=>{
+          const sa=a.warmup_score??a.reputation_score??0, sb=b.warmup_score??b.reputation_score??0;
+          return sb!==sa ? sb-sa : (a.total_sent??0)-(b.total_sent??0);
+        });
+        sel[c.name] = new Set(pool.slice(0, calcNeeded(c.leads.length, c.senderType)).map(s=>s.id));
+      }
+      setSelSenders(sel);
       setStep(6); // Go to Copy step first
     } catch(e) { setError(e.message); }
     finally { setLoading(false); }
@@ -1101,72 +1108,20 @@ export default function App() {
               const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
               const pageSenders = filtered.slice(campPage * PAGE_SIZE, (campPage + 1) * PAGE_SIZE);
               const pageAllChecked = pageSenders.length > 0 && pageSenders.every(s => sel.has(s.id));
-              const dailyRate = camp.senderType === 'outlook' ? 5 : 15;
-              const capacity = sel.size * dailyRate; // emails/day this selection can send
-              const totalLeads = camp.leads.length;
-              const stillNeeded = Math.max(0, needed - sel.size);
               const enough = sel.size >= needed;
-              // How many more leads could be covered with current selection
-              const leadsCanCover = Math.min(capacity, totalLeads);
-              const leadsUncovered = Math.max(0, totalLeads - leadsCanCover);
 
               return (
                 <Card key={camp.name}>
-                  {/* Live capacity counter */}
-                  <div style={{ marginBottom:14, padding:'12px 16px', borderRadius:10,
-                    background: enough ? '#F0FDF4' : sel.size===0 ? T.surfaceAlt : '#FFFBEB',
-                    border: `1.5px solid ${enough?'#A7F3D0':sel.size===0?T.border:'#FDE68A'}` }}>
-                    <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-                      <Pill type={camp.type}>{camp.type==='google_seg'?'Google+SEG':(camp.type||'').toUpperCase()}</Pill>
-                      <span style={{ fontWeight:700, fontSize:15 }}>{camp.name}</span>
-                    </div>
-                    <div style={{ display:'flex', gap:20, marginTop:10, flexWrap:'wrap', alignItems:'flex-end' }}>
-                      {/* Leads info */}
-                      <div>
-                        <div style={{ fontSize:11, color:T.textMuted, fontWeight:600, textTransform:'uppercase', letterSpacing:'0.04em' }}>Total leads</div>
-                        <div style={{ fontSize:22, fontWeight:800, color:T.text, lineHeight:1.1 }}>{totalLeads.toLocaleString()}</div>
-                      </div>
-                      {/* Daily rate */}
-                      <div>
-                        <div style={{ fontSize:11, color:T.textMuted, fontWeight:600, textTransform:'uppercase', letterSpacing:'0.04em' }}>Daily rate</div>
-                        <div style={{ fontSize:22, fontWeight:800, color:T.indigo, lineHeight:1.1 }}>{dailyRate}/sender</div>
-                      </div>
-                      {/* Selected */}
-                      <div>
-                        <div style={{ fontSize:11, color:T.textMuted, fontWeight:600, textTransform:'uppercase', letterSpacing:'0.04em' }}>Selected senders</div>
-                        <div style={{ fontSize:22, fontWeight:800, color:sel.size>0?T.indigo:T.textMuted, lineHeight:1.1 }}>
-                          {sel.size} <span style={{ fontSize:13, fontWeight:400, color:T.textMuted }}>of {needed} needed</span>
-                        </div>
-                      </div>
-                      {/* Capacity */}
-                      <div>
-                        <div style={{ fontSize:11, color:T.textMuted, fontWeight:600, textTransform:'uppercase', letterSpacing:'0.04em' }}>Can reach / day</div>
-                        <div style={{ fontSize:22, fontWeight:800, color:capacity>=totalLeads?T.success:T.warning, lineHeight:1.1 }}>
-                          {capacity.toLocaleString()} <span style={{ fontSize:13, fontWeight:400, color:T.textMuted }}>leads/day</span>
-                        </div>
-                      </div>
-                      {/* Still needed */}
-                      <div style={{ marginLeft:'auto', textAlign:'right' }}>
-                        {enough ? (
-                          <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end' }}>
-                            <span style={{ fontSize:13, fontWeight:700, color:T.success }}>✓ Sufficient coverage</span>
-                            <span style={{ fontSize:11, color:T.textMuted }}>All {totalLeads} leads can be reached</span>
-                          </div>
-                        ) : sel.size === 0 ? (
-                          <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end' }}>
-                            <span style={{ fontSize:13, fontWeight:700, color:T.textMuted }}>Select senders below</span>
-                            <span style={{ fontSize:11, color:T.textMuted }}>Need {needed} senders for {totalLeads} leads at {dailyRate}/day</span>
-                          </div>
-                        ) : (
-                          <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end' }}>
-                            <span style={{ fontSize:13, fontWeight:700, color:T.warning }}>⚠ Need {stillNeeded} more sender{stillNeeded>1?'s':''}</span>
-                            <span style={{ fontSize:11, color:T.textMuted }}>
-                              {leadsUncovered > 0 ? `${leadsUncovered.toLocaleString()} leads won't be reached yet` : 'Capacity sufficient'}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
+                  <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14, flexWrap:'wrap' }}>
+                    <Pill type={camp.type}>{camp.type==='google_seg'?'Google+SEG':(camp.type||'').toUpperCase()}</Pill>
+                    <span style={{ fontWeight:700, fontSize:15 }}>{camp.name}</span>
+                    <span style={{ fontSize:13, color:T.textSub }}>
+                      {camp.leads.length} leads ÷ {camp.senderType==='outlook'?5:15}/day = <strong>{needed} needed</strong>
+                    </span>
+                    <span style={{ marginLeft:'auto', fontSize:13, fontWeight:700,
+                      color: sel.size===0?T.textMuted : enough?T.success:T.warning }}>
+                      {sel.size} / {needed} selected
+                    </span>
                   </div>
 
                   {/* Filters */}
