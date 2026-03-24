@@ -282,36 +282,19 @@ app.post('/clients/:id/campaigns', async (req, res) => {
       } catch (_) {}
     }
 
-    // Step 3: Set schedule — try multiple endpoints and field name combinations
-    const schedulePayloads = [
-      // Most likely based on EmailBison's schedule UI
-      { days: ['monday','tuesday','wednesday','thursday','friday'], start_time: '08:00', end_time: '19:00', timezone: 'America/New_York' },
-      { days_of_week: ['monday','tuesday','wednesday','thursday','friday'], start_time: '08:00', end_time: '19:00', timezone: 'America/New_York' },
-      { sending_days: ['monday','tuesday','wednesday','thursday','friday'], sending_hours_start: '08:00', sending_hours_end: '19:00', timezone: 'America/New_York' },
-      { schedule: { days: ['monday','tuesday','wednesday','thursday','friday'], start_time: '08:00', end_time: '19:00', timezone: 'America/New_York' } },
-    ];
-    const scheduleEndpoints = [
-      `/api/campaigns/${id}/schedule`,
-      `/api/campaigns/${id}/schedules`,
-      `/api/campaigns/${id}/sending-schedule`,
-    ];
-    let scheduleSet = false;
-    for (const endpoint of scheduleEndpoints) {
-      if (scheduleSet) break;
-      for (const payload of schedulePayloads) {
-        try {
-          await eb(req.params.id, endpoint, 'POST', payload);
-          scheduleSet = true;
-          break;
-        } catch (_) {
-          // Try PUT
-          try {
-            await eb(req.params.id, endpoint, 'PUT', payload);
-            scheduleSet = true;
-            break;
-          } catch (_) {}
-        }
-      }
+    // Step 3: Set schedule — confirmed field names from API debug
+    try {
+      await eb(req.params.id, `/api/campaigns/${id}/schedule`, 'POST', {
+        monday: true, tuesday: true, wednesday: true,
+        thursday: true, friday: true, saturday: false, sunday: false,
+        start_time: '08:00:00', end_time: '19:00:00', timezone: 'America/New_York',
+      });
+    } catch(e1) {
+      try { await eb(req.params.id, `/api/campaigns/${id}/schedule`, 'PUT', {
+        monday: true, tuesday: true, wednesday: true,
+        thursday: true, friday: true, saturday: false, sunday: false,
+        start_time: '08:00:00', end_time: '19:00:00', timezone: 'America/New_York',
+      }); } catch(_) {}
     }
 
     res.json({ id, name: req.body.name });
@@ -597,27 +580,19 @@ app.patch('/clients/:id/draft-campaigns/:cid/settings', async (req, res) => {
     const patch = {};
     if (req.body.schedule) {
       // Try dedicated schedule endpoint first, then fallback to PATCH fields
-      const schedPayloads = [
-        { days: ['monday','tuesday','wednesday','thursday','friday'], start_time: '08:00', end_time: '19:00', timezone: 'America/New_York' },
-        { days_of_week: ['monday','tuesday','wednesday','thursday','friday'], start_time: '08:00', end_time: '19:00', timezone: 'America/New_York' },
-        { sending_days: ['monday','tuesday','wednesday','thursday','friday'], sending_hours_start: '08:00', sending_hours_end: '19:00', timezone: 'America/New_York' },
-      ];
-      let schedDone = false;
-      for (const pl of schedPayloads) {
-        if (schedDone) break;
-        for (const method of ['POST','PUT']) {
-          try {
-            await eb(req.params.id, `/api/campaigns/${req.params.cid}/schedule`, method, pl);
-            schedDone = true; break;
-          } catch(_) {}
-        }
-      }
-      if (!schedDone) {
-        // Final fallback — patch campaign directly
-        patch.sending_days        = ['monday','tuesday','wednesday','thursday','friday'];
-        patch.sending_hours_start = '08:00';
-        patch.sending_hours_end   = '19:00';
-        patch.timezone            = 'America/New_York';
+      // Confirmed field names from API — individual day booleans + start_time/end_time
+      try {
+        await eb(req.params.id, `/api/campaigns/${req.params.cid}/schedule`, 'POST', {
+        monday: true, tuesday: true, wednesday: true,
+        thursday: true, friday: true, saturday: false, sunday: false,
+        start_time: '08:00:00', end_time: '19:00:00', timezone: 'America/New_York',
+      });
+      } catch(_) {
+        try { await eb(req.params.id, `/api/campaigns/${req.params.cid}/schedule`, 'PUT', {
+        monday: true, tuesday: true, wednesday: true,
+        thursday: true, friday: true, saturday: false, sunday: false,
+        start_time: '08:00:00', end_time: '19:00:00', timezone: 'America/New_York',
+      }); } catch(_) {}
       }
     }
     if (req.body.plain_text) {
