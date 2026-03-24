@@ -304,6 +304,80 @@ function MappingDialog({ columns, onConfirm, onCancel }) {
 }
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
+
+// ─── Inline template picker for deploy copy step ─────────────────────────────
+function TemplateInlinePicker({ onSelect }) {
+  const [templates, setTemplates] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  if (!loaded) return (
+    <button onClick={()=>{ setLoaded(true); api('/templates').then(setTemplates).catch(()=>{}); }}
+      style={{padding:'5px 12px',border:'1.5px solid #E5E0D8',borderRadius:7,fontSize:12,
+        fontFamily:'inherit',background:'#fff',cursor:'pointer',color:'#6B7280'}}>
+      📋 Saved templates
+    </button>
+  );
+  if (!templates.length) return <span style={{fontSize:12,color:'#9CA3AF'}}>No saved templates</span>;
+  return (
+    <select defaultValue=""
+      onChange={e=>{
+        const t=templates.find(x=>x.id===e.target.value);
+        if(!t) return;
+        const steps=(t.steps||[]).map(s=>({
+          subject:s.subject||s.email_subject||'',
+          body:stripHtml(s.body||s.email_body||''),
+          delay_days:Math.max(1,s.delay_days||1),
+        }));
+        if(steps.length) onSelect(steps);
+        e.target.value='';
+      }}
+      style={{padding:'5px 12px',border:'1.5px solid #E5E0D8',borderRadius:7,fontSize:12,
+        fontFamily:'inherit',background:'#fff',cursor:'pointer',outline:'none'}}>
+      <option value="" disabled>📋 Use saved template...</option>
+      {templates.map(t=><option key={t.id} value={t.id}>{t.name} ({t.steps?.length||0} emails)</option>)}
+    </select>
+  );
+}
+
+// ─── Inline campaign sequence picker ─────────────────────────────────────────
+function CampaignSequencePicker({ clientId, onSelect }) {
+  const [camps, setCamps] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [loading, setLoading] = useState(false);
+  if (!loaded) return (
+    <button onClick={async ()=>{
+        setLoaded(true); setLoading(true);
+        try { setCamps(await api('/clients/'+clientId+'/campaigns/search')); } catch(_){}
+        finally { setLoading(false); }
+      }}
+      style={{padding:'5px 12px',border:'1.5px solid #E5E0D8',borderRadius:7,fontSize:12,
+        fontFamily:'inherit',background:'#fff',cursor:'pointer',color:'#6B7280'}}>
+      🔗 Pull from campaign
+    </button>
+  );
+  if (loading) return <span style={{fontSize:12,color:'#9CA3AF'}}>Loading campaigns...</span>;
+  if (!camps.length) return <span style={{fontSize:12,color:'#9CA3AF'}}>No campaigns found</span>;
+  return (
+    <select defaultValue=""
+      onChange={async e=>{
+        const id=e.target.value; e.target.value='';
+        if(!id) return;
+        try {
+          const steps=await api('/clients/'+clientId+'/campaigns/'+id+'/sequence');
+          if(steps.length) onSelect(steps.map(s=>({
+            subject:s.subject||'',
+            body:stripHtml(s.body||''),
+            delay_days:Math.max(1,s.delay_days||1),
+          })));
+        } catch(_){}
+      }}
+      style={{padding:'5px 12px',border:'1.5px solid #E5E0D8',borderRadius:7,fontSize:12,
+        fontFamily:'inherit',background:'#fff',cursor:'pointer',outline:'none'}}>
+      <option value="" disabled>🔗 Pull from campaign...</option>
+      {camps.slice(0,60).map(camp=><option key={camp.id} value={camp.id}>{camp.name}</option>)}
+    </select>
+  );
+}
+
 export default function App() {
   const [step, setStep]     = useState(1);
   const [activeTab, setActiveTab] = useState('deploy'); // 'deploy' | 'templates'
@@ -1003,17 +1077,18 @@ export default function App() {
               </button>
             )}
 
-            {/* Also load from template */}
+            {/* Inline template/campaign picker */}
             <div style={{ marginTop:16, padding:'12px 16px', background:T.surfaceAlt, borderRadius:10,
-              display:'flex', alignItems:'center', gap:12, fontSize:13 }}>
-              <span style={{ color:T.textMuted }}>💡</span>
-              <span style={{ color:T.textSub }}>Want to reuse copy from a previous campaign?</span>
-              <button onClick={()=>setActiveTab('templates')}
-                style={{ marginLeft:'auto', padding:'6px 14px', background:T.indigoLight, color:T.indigo,
-                  border:`1px solid ${T.indigo}30`, borderRadius:8, cursor:'pointer', fontFamily:'inherit',
-                  fontSize:12, fontWeight:600 }}>
-                Open Templates →
-              </button>
+              display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+              <span style={{ fontSize:13, color:T.textSub, fontWeight:600 }}>Load copy from:</span>
+              {/* Saved templates */}
+              <TemplateInlinePicker onSelect={steps => {
+                setEmailSteps(steps);
+              }} />
+              {/* Pull from existing campaign */}
+              {clientId && (
+                <CampaignSequencePicker clientId={clientId} onSelect={steps => setEmailSteps(steps)} />
+              )}
             </div>
 
             <div style={{ marginTop:20, display:'flex', gap:10 }}>
@@ -1165,8 +1240,8 @@ export default function App() {
                                 </div>
                               </td>
                               <td style={{ padding:'8px 12px', fontSize:12 }}>
-                                {s.name && <div style={{fontSize:11,color:T.textMuted,marginBottom:1}}>{s.name}</div>}
-                                {s.email}
+                                {s.name && <div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:2}}>{s.name}</div>}
+                                <div style={{fontSize:11,color:T.textSub}}>{s.email}</div>
                               </td>
                               <td style={{ padding:'8px 8px', textAlign:'right', fontWeight:600, fontSize:12, color:scColor }}>{sc??'—'}</td>
                               <td style={{ padding:'8px 8px', textAlign:'right', fontSize:12, color:T.textSub }}>{s.warmup_sent!=null?Number(s.warmup_sent).toLocaleString():'—'}</td>
@@ -1722,8 +1797,8 @@ function DraftsTab({ clientId, clients, allSenders }) {
                             </div>
                           </td>
                           <td style={{padding:'8px 12px',fontSize:12}}>
-                            {s.name && <div style={{fontSize:11,color:T.textMuted,marginBottom:1}}>{s.name}</div>}
-                            {s.email}
+                            {s.name && <div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:2}}>{s.name}</div>}
+                            <div style={{fontSize:11,color:T.textSub}}>{s.email}</div>
                           </td>
                           <td style={{padding:'8px 8px',textAlign:'right',fontWeight:600,fontSize:12,color:scColor}}>{sc??'—'}</td>
                           <td style={{padding:'8px 8px',textAlign:'right',fontSize:12,color:T.textSub}}>{s.warmup_sent!=null?Number(s.warmup_sent).toLocaleString():'—'}</td>
