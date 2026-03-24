@@ -1271,128 +1271,189 @@ export default function App() {
 // ─── Templates Tab ────────────────────────────────────────────────────────────
 // ─── Drafts Tab ───────────────────────────────────────────────────────────────
 function DraftsTab({ clientId, clients, allSenders }) {
-  const [loading, setLoading] = useState(false);
   const [drafts, setDrafts] = useState([]);
-  const [err, setErr] = useState('');
-  const [applying, setApplying] = useState({});
-  const [actionDone, setActionDone] = useState({});
-  const [draftSteps, setDraftSteps] = useState({});
-  const [draftSenders, setDraftSenders] = useState({});
-  const [senderPages, setSenderPages] = useState({}); // per draft current page
-  const [senderFilters2, setSenderFilters2] = useState({}); // per draft: {provider:'all', search:''}
-  const [templates, setTemplates] = useState([]);
-  const [selClient, setSelClient] = useState(clientId || '');
+  const [loadingDrafts, setLoadingDrafts] = useState(false);
   const [localSenders, setLocalSenders] = useState([]);
   const [sendersLoading, setSendersLoading] = useState(false);
+  const [templates, setTemplates] = useState([]);
+  const [selClient, setSelClient] = useState(clientId || '');
+  const [selDraftId, setSelDraftId] = useState('');
+  const [err, setErr] = useState('');
+
+  // Per-draft working state
+  const [steps, setSteps] = useState([{subject:'',body:'',delay_days:1}]);
+  const [selSend, setSelSend] = useState(new Set());
+  const [senderPage, setSenderPage] = useState(0);
+  const [senderFilter, setSenderFilter] = useState({provider:'all', search:''});
+  const [applying, setApplying] = useState({});
+  const [actionDone, setActionDone] = useState({});
 
   useEffect(() => {
     api('/templates').then(setTemplates).catch(() => {});
   }, []);
 
   useEffect(() => {
-    if (selClient) {
-      loadDrafts(selClient);
-      // Auto-fetch senders for this client
-      setSendersLoading(true);
-      api('/clients/' + selClient + '/sender-emails')
-        .then(d => { setLocalSenders(Array.isArray(d) ? d : []); })
-        .catch(() => {})
-        .finally(() => setSendersLoading(false));
-    }
+    if (!selClient) return;
+    setLoadingDrafts(true);
+    setDrafts([]); setSelDraftId(''); setErr('');
+    api('/clients/' + selClient + '/draft-campaigns')
+      .then(d => setDrafts(Array.isArray(d) ? d : []))
+      .catch(e => setErr(e.message))
+      .finally(() => setLoadingDrafts(false));
+    setSendersLoading(true);
+    api('/clients/' + selClient + '/sender-emails')
+      .then(d => setLocalSenders(Array.isArray(d) ? d : []))
+      .catch(() => {})
+      .finally(() => setSendersLoading(false));
   }, [selClient]);
 
-  async function loadDrafts(cid) {
-    if (!cid) return;
-    setLoading(true); setErr(''); setDrafts([]);
-    try {
-      const d = await api('/clients/' + cid + '/draft-campaigns');
-      setDrafts(Array.isArray(d) ? d : []);
-    } catch(e) { setErr(e.message); }
-    finally { setLoading(false); }
-  }
+  // Reset working state when draft changes
+  useEffect(() => {
+    setSteps([{subject:'',body:'',delay_days:1}]);
+    setSelSend(new Set());
+    setSenderPage(0);
+    setSenderFilter({provider:'all', search:''});
+    setActionDone({});
+    setErr('');
+  }, [selDraftId]);
 
-  async function applySettings(draft) {
-    const key = draft.id + '_cfg';
-    setApplying(p => ({...p, [key]: true}));
+  const draft = drafts.find(d => String(d.id) === String(selDraftId));
+  const sndList = (allSenders && allSenders.length > 0) ? allSenders : localSenders;
+
+  async function applySettings() {
+    if (!draft) return;
+    setApplying(p => ({...p, cfg:true}));
     try {
       await api('/clients/' + selClient + '/draft-campaigns/' + draft.id + '/settings', {
         method: 'PATCH',
         body: JSON.stringify({ schedule: !draft.has_schedule, plain_text: !draft.is_plain_text }),
       });
-      setActionDone(p => ({...p, [key]: true}));
-      loadDrafts(selClient);
+      setActionDone(p => ({...p, cfg:true}));
+      // Refresh drafts list
+      const d = await api('/clients/' + selClient + '/draft-campaigns');
+      setDrafts(Array.isArray(d) ? d : []);
     } catch(e) { setErr(e.message); }
-    finally { setApplying(p => ({...p, [key]: false})); }
+    finally { setApplying(p => ({...p, cfg:false})); }
   }
 
-  async function applySequence(draft) {
-    const key = draft.id + '_seq';
-    const allSteps = draftSteps[draft.id] || [];
-    const validSteps = allSteps.filter(s => s.subject.trim() || s.body.trim());
-    if (!validSteps.length) { setErr('Add at least one email step.'); return; }
-    setApplying(p => ({...p, [key]: true}));
+  async function applySequence() {
+    if (!draft) return;
+    const valid = steps.filter(s => s.subject.trim() || s.body.trim());
+    if (!valid.length) { setErr('Add at least one email step.'); return; }
+    setApplying(p => ({...p, seq:true}));
     try {
       await api('/clients/' + selClient + '/campaigns/' + draft.id + '/sequence', {
-        method: 'POST', body: JSON.stringify({ steps: validSteps }),
+        method: 'POST', body: JSON.stringify({ steps: valid }),
       });
-      setActionDone(p => ({...p, [key]: true}));
-      loadDrafts(selClient);
+      setActionDone(p => ({...p, seq:true}));
+      const d = await api('/clients/' + selClient + '/draft-campaigns');
+      setDrafts(Array.isArray(d) ? d : []);
     } catch(e) { setErr(e.message); }
-    finally { setApplying(p => ({...p, [key]: false})); }
+    finally { setApplying(p => ({...p, seq:false})); }
   }
 
-  async function applySenders(draft) {
-    const key = draft.id + '_snd';
-    const ids = [...(draftSenders[draft.id] || new Set())];
+  async function applySenders() {
+    if (!draft) return;
+    const ids = [...selSend];
     if (!ids.length) { setErr('Select at least one sender.'); return; }
-    setApplying(p => ({...p, [key]: true}));
+    setApplying(p => ({...p, snd:true}));
     try {
       await api('/clients/' + selClient + '/campaigns/' + draft.id + '/senders', {
         method: 'POST', body: JSON.stringify({ senderIds: ids }),
       });
-      setActionDone(p => ({...p, [key]: true}));
-      loadDrafts(selClient);
+      setActionDone(p => ({...p, snd:true}));
+      const d = await api('/clients/' + selClient + '/draft-campaigns');
+      setDrafts(Array.isArray(d) ? d : []);
     } catch(e) { setErr(e.message); }
-    finally { setApplying(p => ({...p, [key]: false})); }
+    finally { setApplying(p => ({...p, snd:false})); }
   }
 
-  function loadTemplate(draftId, tpl) {
-    const steps = (tpl.steps || []).map(s => ({
+  function loadTemplate(tpl) {
+    const s = (tpl.steps || []).map(s => ({
       subject: s.subject || s.email_subject || '',
       body: stripHtml(s.body || s.email_body || ''),
       delay_days: Math.max(1, s.delay_days || 1),
     }));
-    setDraftSteps(p => ({...p, [draftId]: steps}));
+    if (s.length) setSteps(s);
   }
 
-  const snd = (color, bg, text) => ({
-    fontSize:11, fontWeight:600, padding:'2px 8px', borderRadius:999,
-    background:bg, color:color, display:'inline-block'
+  // Filtered senders
+  const filteredSenders = sndList.filter(s => {
+    if (senderFilter.provider === 'google') return s.provider === 'google' || s.provider === 'other';
+    if (senderFilter.provider === 'outlook') return s.provider === 'outlook' || s.provider === 'other';
+    return true;
+  }).filter(s => {
+    if (!senderFilter.search) return true;
+    const q = senderFilter.search.toLowerCase().trim();
+    const em = s.email.toLowerCase();
+    const domain = em.includes('@') ? em.split('@')[1] : '';
+    return em.includes(q) || domain.includes(q);
   });
+
+  const PAGE_SIZE = 10;
+  const totalPages = Math.ceil(filteredSenders.length / PAGE_SIZE);
+  const pageSenders = filteredSenders.slice(senderPage * PAGE_SIZE, (senderPage + 1) * PAGE_SIZE);
+  const pageAllChecked = pageSenders.length > 0 && pageSenders.every(s => selSend.has(s.id));
+
+  function setFilt(f) {
+    setSenderFilter(p => ({...p, ...f}));
+    setSenderPage(0);
+  }
+
+  const chip = (ok, okText, noText) => (
+    <span style={{fontSize:11,fontWeight:600,padding:'2px 7px',borderRadius:999,flexShrink:0,
+      background:ok?'#DCFCE7':'#FEF3C7',color:ok?'#15803D':'#92400E'}}>
+      {ok ? '✓ '+okText : '! '+noText}
+    </span>
+  );
 
   return (
     <div style={{display:'flex',flexDirection:'column',gap:16}}>
-      {/* Header */}
+      {/* ── Header / selectors ── */}
       <div style={{display:'flex',alignItems:'flex-start',gap:12,flexWrap:'wrap'}}>
         <div style={{flex:1}}>
           <h2 style={{fontSize:20,fontWeight:700,marginBottom:4}}>Manage Draft Campaigns</h2>
           <p style={{fontSize:13,color:T.textSub,margin:0}}>
-            Complete partially configured campaigns. Each card shows what is done and what still needs to be set up.
+            Select a client, pick a draft campaign, and configure whatever still needs doing.
           </p>
         </div>
-        <div style={{display:'flex',gap:8}}>
-          <select value={selClient} onChange={e=>setSelClient(e.target.value)}
-            style={{padding:'7px 12px',border:'1.5px solid '+T.border,borderRadius:8,fontSize:13,fontFamily:'inherit',background:T.surface,outline:'none',cursor:'pointer'}}>
-            <option value="">Select client...</option>
-            {(clients||[]).map(cl=><option key={cl.id} value={cl.id}>{cl.name}</option>)}
-          </select>
-          <button onClick={()=>loadDrafts(selClient)} disabled={!selClient||loading}
-            style={{padding:'7px 14px',background:T.indigo,color:'#fff',border:'none',borderRadius:8,
-              fontSize:13,fontWeight:600,cursor:'pointer',fontFamily:'inherit',
-              opacity:(!selClient||loading)?0.5:1}}>
-            {loading?'Loading...':'Refresh'}
+      </div>
+
+      {/* Client + Campaign selectors */}
+      <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
+        <select value={selClient} onChange={e=>setSelClient(e.target.value)}
+          style={{padding:'8px 12px',border:'1.5px solid '+T.border,borderRadius:8,fontSize:13,
+            fontFamily:'inherit',background:T.surface,outline:'none',cursor:'pointer',minWidth:180}}>
+          <option value="">Select client...</option>
+          {(clients||[]).map(cl=><option key={cl.id} value={cl.id}>{cl.name}</option>)}
+        </select>
+
+        <select value={selDraftId} onChange={e=>setSelDraftId(e.target.value)}
+          disabled={!selClient||loadingDrafts||drafts.length===0}
+          style={{padding:'8px 12px',border:'1.5px solid '+T.border,borderRadius:8,fontSize:13,
+            fontFamily:'inherit',background:T.surface,outline:'none',cursor:'pointer',flex:1,minWidth:220,
+            opacity:(!selClient||loadingDrafts)?0.5:1}}>
+          <option value="">{loadingDrafts?'Loading drafts...':(drafts.length===0&&selClient)?'No draft campaigns found':'Select a draft campaign...'}</option>
+          {drafts.map(d=>(
+            <option key={d.id} value={d.id}>
+              {d.name} {d.todo.length>0?'('+d.todo.length+' actions needed)':'(ready)'}
+            </option>
+          ))}
+        </select>
+
+        {selClient && !loadingDrafts && (
+          <button onClick={()=>{
+            setLoadingDrafts(true);
+            api('/clients/'+selClient+'/draft-campaigns')
+              .then(d=>setDrafts(Array.isArray(d)?d:[]))
+              .catch(e=>setErr(e.message))
+              .finally(()=>setLoadingDrafts(false));
+          }}
+            style={{padding:'8px 14px',background:T.indigo,color:'#fff',border:'none',
+              borderRadius:8,fontSize:13,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>
+            Refresh
           </button>
-        </div>
+        )}
       </div>
 
       {err && (
@@ -1402,417 +1463,309 @@ function DraftsTab({ clientId, clients, allSenders }) {
         </div>
       )}
 
-      {loading && (
-        <div style={{textAlign:'center',padding:'40px',color:T.textSub}}>
-          <Spinner/> Loading draft campaigns...
-        </div>
-      )}
+      {/* ── Campaign detail ── */}
+      {draft && (
+        <div style={{display:'flex',flexDirection:'column',gap:16}}>
 
-      {!loading && selClient && drafts.length === 0 && !err && (
-        <div style={{textAlign:'center',padding:'48px',color:T.textMuted,fontSize:14,
-          background:T.surface,borderRadius:12,border:'1px solid '+T.border}}>
-          No draft campaigns found for this client.
-        </div>
-      )}
-
-      {drafts.map(draft => {
-        const steps = draftSteps[draft.id] || [{subject:'',body:'',delay_days:1}];
-        const selSend = draftSenders[draft.id] || new Set();
-
-        return (
-          <div key={draft.id} style={{background:T.surface,border:'1.5px solid '+T.border,
-            borderRadius:14,overflow:'hidden'}}>
-
-            {/* Header row — click to expand */}
-            <div style={{padding:'14px 20px',display:'flex',
-                alignItems:'center',gap:10,flexWrap:'wrap',
-                background:T.surfaceAlt}}>
-
-              <span style={{fontWeight:700,fontSize:15,flex:1,minWidth:160}}>{draft.name}</span>
-
-              {/* Status chips */}
-              <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-                {[
-                  {label:'Leads',    ok:draft.has_leads,    detail:draft.leads_count+' leads'},
-                  {label:'Sequence', ok:draft.has_sequence, detail:draft.sequence_count+' steps'},
-                  {label:'Senders',  ok:draft.has_senders,  detail:draft.sender_count+' senders'},
-                  {label:'Schedule', ok:draft.has_schedule, detail:'Set'},
-                  {label:'Plain txt',ok:draft.is_plain_text,detail:'On'},
-                ].map(({label,ok,detail})=>(
-                  <span key={label} style={{...snd(ok?'#15803D':'#92400E', ok?'#DCFCE7':'#FEF3C7')}}>
-                    {ok?'✓':'!'} {label}{ok?' ('+detail+')':''}
-                  </span>
-                ))}
-              </div>
-
+          {/* Campaign status summary */}
+          <div style={{background:T.surface,border:'1.5px solid '+T.border,borderRadius:12,padding:'14px 18px'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+              <span style={{fontWeight:700,fontSize:16,marginRight:4}}>{draft.name}</span>
+              {chip(draft.has_leads, 'Leads ('+draft.leads_count+')', 'No leads')}
+              {chip(draft.has_sequence, 'Sequence ('+draft.sequence_count+' steps)', 'No sequence')}
+              {chip(draft.has_senders, 'Senders ('+draft.sender_count+')', 'No senders')}
+              {chip(draft.has_schedule, 'Schedule set', 'No schedule')}
+              {chip(draft.is_plain_text, 'Plain text on', 'Plain text off')}
               {draft.todo.length > 0
-                ? <span style={{...snd(T.error,'#FEF2F2'),flexShrink:0}}>
+                ? <span style={{fontSize:11,fontWeight:700,padding:'2px 8px',borderRadius:999,
+                    background:'#FEF2F2',color:T.error,marginLeft:'auto',flexShrink:0}}>
                     {draft.todo.length} action{draft.todo.length>1?'s':''} needed
                   </span>
-                : <span style={{...snd('#15803D','#DCFCE7'),flexShrink:0}}>
+                : <span style={{fontSize:11,fontWeight:700,padding:'2px 8px',borderRadius:999,
+                    background:'#DCFCE7',color:'#15803D',marginLeft:'auto',flexShrink:0}}>
                     Ready to launch
                   </span>
               }
             </div>
+          </div>
 
-            {/* Always visible panel */}
-            {(
-              <div style={{borderTop:'1px solid '+T.border,padding:20,
-                display:'flex',flexDirection:'column',gap:18}}>
+          {/* ── Settings ── */}
+          <div style={{background:T.surface,border:'1.5px solid '+T.border,borderRadius:12,padding:'16px 18px'}}>
+            <div style={{fontWeight:700,fontSize:15,marginBottom:12}}>Settings</div>
+            <div style={{display:'flex',gap:20,alignItems:'center',flexWrap:'wrap'}}>
+              <span style={{fontSize:13,color:T.textSub}}>
+                Schedule: <strong style={{color:draft.has_schedule?T.success:T.warning}}>
+                  {draft.has_schedule?'Mon–Fri 8AM–7PM ET':'Not set'}
+                </strong>
+              </span>
+              <span style={{fontSize:13,color:T.textSub}}>
+                Plain text: <strong style={{color:draft.is_plain_text?T.success:T.warning}}>
+                  {draft.is_plain_text?'On':'Off'}
+                </strong>
+              </span>
+              {(!draft.has_schedule||!draft.is_plain_text) && (
+                <button disabled={!!applying.cfg} onClick={applySettings}
+                  style={{marginLeft:'auto',padding:'7px 16px',background:T.indigo,color:'#fff',
+                    border:'none',borderRadius:8,fontSize:13,fontWeight:600,cursor:'pointer',
+                    fontFamily:'inherit',opacity:applying.cfg?0.6:1}}>
+                  {applying.cfg?'Applying...':'Apply Missing Settings'}
+                </button>
+              )}
+              {actionDone.cfg && <span style={{fontSize:12,color:T.success,fontWeight:600}}>Applied</span>}
+            </div>
+          </div>
 
-                {/* Settings */}
-                <div style={{background:T.surfaceAlt,borderRadius:10,padding:'14px 16px'}}>
-                  <div style={{fontWeight:600,fontSize:14,marginBottom:10}}>Settings</div>
-                  <div style={{display:'flex',gap:16,alignItems:'center',flexWrap:'wrap'}}>
-                    <span style={{fontSize:13,color:T.textSub}}>
-                      Schedule: <strong style={{color:draft.has_schedule?T.success:T.warning}}>
-                        {draft.has_schedule?'Mon-Fri 8AM-7PM ET':'Not set'}
-                      </strong>
+          {/* ── Email Sequence ── */}
+          <div style={{background:T.surface,border:'1.5px solid '+T.border,borderRadius:12,padding:'16px 18px'}}>
+            <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14,flexWrap:'wrap'}}>
+              <span style={{fontWeight:700,fontSize:15}}>Email Sequence</span>
+              <span style={{fontSize:11,fontWeight:600,color:draft.has_sequence?T.success:T.warning}}>
+                {draft.has_sequence?'Has '+draft.sequence_count+' steps — editing will replace them':'Not configured'}
+              </span>
+              <div style={{marginLeft:'auto',display:'flex',gap:6}}>
+                {templates.length>0 && (
+                  <select defaultValue="" onChange={e=>{const t=templates.find(x=>x.id===e.target.value);if(t)loadTemplate(t);e.target.value='';}}
+                    style={{padding:'5px 10px',border:'1.5px solid '+T.border,borderRadius:7,fontSize:12,
+                      fontFamily:'inherit',background:T.surface,outline:'none',cursor:'pointer'}}>
+                    <option value="" disabled>Saved template...</option>
+                    {templates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                )}
+                {selClient && (
+                  <select defaultValue=""
+                    onChange={async e=>{
+                      const campId=e.target.value; e.target.value='';
+                      if(!campId) return;
+                      try { const s=await api('/clients/'+selClient+'/campaigns/'+campId+'/sequence'); if(s.length) loadTemplate({steps:s}); }
+                      catch(_){}
+                    }}
+                    onFocus={async e=>{
+                      if(e.target.options.length<=1){
+                        try {
+                          const camps=await api('/clients/'+selClient+'/campaigns/search');
+                          Array.from(e.target.options).slice(1).forEach(o=>o.remove());
+                          camps.slice(0,50).forEach(camp=>{const o=document.createElement('option');o.value=camp.id;o.text=camp.name;e.target.appendChild(o);});
+                        } catch(_){}
+                      }
+                    }}
+                    style={{padding:'5px 10px',border:'1.5px solid '+T.border,borderRadius:7,fontSize:12,
+                      fontFamily:'inherit',background:T.surface,outline:'none',cursor:'pointer'}}>
+                    <option value="" disabled>Pull from campaign...</option>
+                  </select>
+                )}
+              </div>
+            </div>
+
+            <div style={{display:'flex',flexDirection:'column',gap:10}}>
+              {steps.map((s,i)=>(
+                <div key={i} style={{border:'1px solid '+T.border,borderRadius:9,overflow:'hidden'}}>
+                  <div style={{padding:'7px 12px',background:i===0?T.indigoLight:'#F0FDF4',
+                    borderBottom:'1px solid '+T.border,display:'flex',alignItems:'center',gap:8}}>
+                    <span style={{fontWeight:700,fontSize:12,color:i===0?T.indigo:T.success}}>
+                      {i===0?'Email 1 — Initial outreach':'Follow-up '+i}
                     </span>
-                    <span style={{fontSize:13,color:T.textSub}}>
-                      Plain text: <strong style={{color:draft.is_plain_text?T.success:T.warning}}>
-                        {draft.is_plain_text?'On':'Off'}
-                      </strong>
-                    </span>
-                    {(!draft.has_schedule||!draft.is_plain_text) && (
-                      <button disabled={!!applying[draft.id+'_cfg']}
-                        onClick={()=>applySettings(draft)}
-                        style={{marginLeft:'auto',padding:'7px 14px',background:T.indigo,
-                          color:'#fff',border:'none',borderRadius:8,fontSize:12,
-                          fontWeight:600,cursor:'pointer',fontFamily:'inherit',
-                          opacity:applying[draft.id+'_cfg']?0.6:1}}>
-                        {applying[draft.id+'_cfg']?'Applying...':'Apply Missing Settings'}
-                      </button>
-                    )}
-                    {actionDone[draft.id+'_cfg'] && (
-                      <span style={{fontSize:12,color:T.success,fontWeight:600}}>Applied</span>
+                    {i>0 && (
+                      <div style={{display:'flex',alignItems:'center',gap:6,marginLeft:'auto'}}>
+                        <span style={{fontSize:11,color:T.textMuted}}>Day</span>
+                        <input type="number" min={1} value={s.delay_days}
+                          onChange={e=>setSteps(prev=>prev.map((x,j)=>j===i?{...x,delay_days:parseInt(e.target.value)||1}:x))}
+                          style={{width:44,padding:'2px 6px',border:'1px solid '+T.border,
+                            borderRadius:5,fontSize:12,textAlign:'center',fontFamily:'inherit',outline:'none'}} />
+                        <button onClick={()=>setSteps(prev=>prev.filter((_,j)=>j!==i))}
+                          style={{background:'none',border:'none',cursor:'pointer',fontSize:18,
+                            color:T.textMuted,lineHeight:1,padding:0}}>×</button>
+                      </div>
                     )}
                   </div>
+                  <div style={{padding:'10px 12px',display:'flex',flexDirection:'column',gap:7}}>
+                    <input value={s.subject} placeholder="Subject line..."
+                      onChange={e=>setSteps(prev=>prev.map((x,j)=>j===i?{...x,subject:e.target.value}:x))}
+                      style={{width:'100%',padding:'7px 10px',border:'1px solid '+T.border,
+                        borderRadius:7,fontSize:13,fontFamily:'inherit',outline:'none'}} />
+                    <textarea rows={5} value={s.body} placeholder="Email body..."
+                      onChange={e=>setSteps(prev=>prev.map((x,j)=>j===i?{...x,body:e.target.value}:x))}
+                      style={{width:'100%',padding:'7px 10px',border:'1px solid '+T.border,
+                        borderRadius:7,fontSize:12,fontFamily:'ui-monospace,monospace',
+                        outline:'none',resize:'vertical',lineHeight:1.6}} />
+                  </div>
                 </div>
+              ))}
+            </div>
 
-                {/* Sequence editor */}
-                <div style={{background:T.surfaceAlt,borderRadius:10,padding:'14px 16px'}}>
-                  <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,flexWrap:'wrap'}}>
-                    <div style={{fontWeight:600,fontSize:14}}>Email Sequence</div>
-                    <span style={{fontSize:11,fontWeight:600,
-                      color:draft.has_sequence?T.success:T.warning}}>
-                      {draft.has_sequence
-                        ?'Already has '+draft.sequence_count+' steps — will replace'
-                        :'Not configured'}
-                    </span>
-                    <div style={{marginLeft:'auto',display:'flex',gap:6}}>
-                      {/* Load from saved template */}
-                      {templates.length>0 && (
-                        <select defaultValue=""
-                          onChange={e=>{
-                            const t=templates.find(x=>x.id===e.target.value);
-                            if(t) loadTemplate(draft.id,t);
-                            e.target.value='';
-                          }}
-                          style={{padding:'5px 10px',border:'1.5px solid '+T.border,
-                            borderRadius:7,fontSize:12,fontFamily:'inherit',
-                            background:T.surface,outline:'none',cursor:'pointer'}}>
-                          <option value="" disabled>Saved template...</option>
-                          {templates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
-                        </select>
-                      )}
-                      {/* Pull from existing campaign */}
-                      {selClient && (
-                        <select defaultValue=""
-                          onChange={async e=>{
-                            const campId=e.target.value; e.target.value='';
-                            if(!campId) return;
-                            try {
-                              const steps=await api('/clients/'+selClient+'/campaigns/'+campId+'/sequence');
-                              if(steps.length) loadTemplate(draft.id,{steps});
-                            } catch(_){}
-                          }}
-                          onFocus={async e=>{
-                            if(e.target.options.length<=1) {
-                              try {
-                                const camps=await api('/clients/'+selClient+'/campaigns/search');
-                                Array.from(e.target.options).slice(1).forEach(o=>o.remove());
-                                camps.slice(0,50).forEach(camp=>{
-                                  const o=document.createElement('option');
-                                  o.value=camp.id; o.text=camp.name;
-                                  e.target.appendChild(o);
-                                });
-                              } catch(_){}
-                            }
-                          }}
-                          style={{padding:'5px 10px',border:'1.5px solid '+T.border,
-                            borderRadius:7,fontSize:12,fontFamily:'inherit',
-                            background:T.surface,outline:'none',cursor:'pointer'}}>
-                          <option value="" disabled>Pull from campaign...</option>
-                        </select>
-                      )}
+            <div style={{display:'flex',gap:8,marginTop:12,alignItems:'center'}}>
+              {steps.length<5 && (
+                <button onClick={()=>setSteps(prev=>[...prev,{subject:'',body:'',delay_days:prev.length*3}])}
+                  style={{padding:'7px 14px',border:'1.5px dashed '+T.border,borderRadius:8,
+                    background:'transparent',fontSize:12,cursor:'pointer',
+                    color:T.textSub,fontFamily:'inherit',fontWeight:600}}>
+                  + Follow-up
+                </button>
+              )}
+              <button disabled={!!applying.seq||!steps.some(s=>s.subject.trim()||s.body.trim())}
+                onClick={applySequence}
+                style={{marginLeft:'auto',padding:'7px 16px',background:T.indigo,color:'#fff',
+                  border:'none',borderRadius:8,fontSize:13,fontWeight:600,cursor:'pointer',
+                  fontFamily:'inherit',
+                  opacity:(applying.seq||!steps.some(s=>s.subject.trim()||s.body.trim()))?0.5:1}}>
+                {applying.seq?'Applying...':draft.has_sequence?'Update Sequence':'Apply Sequence'}
+              </button>
+              {actionDone.seq && <span style={{fontSize:12,color:T.success,fontWeight:600}}>Applied</span>}
+            </div>
+          </div>
+
+          {/* ── Sender Emails ── */}
+          <div style={{background:T.surface,border:'1.5px solid '+T.border,borderRadius:12,padding:'16px 18px'}}>
+            <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,flexWrap:'wrap'}}>
+              <span style={{fontWeight:700,fontSize:15}}>Sender Emails</span>
+              <span style={{fontSize:11,fontWeight:600,color:draft.has_senders?T.success:T.warning}}>
+                {draft.has_senders?draft.sender_count+' currently assigned':'None assigned yet'}
+              </span>
+              <span style={{marginLeft:'auto',fontSize:12,color:T.textMuted}}>{selSend.size} selected</span>
+            </div>
+
+            {/* Filters */}
+            <div style={{display:'flex',gap:6,marginBottom:8,flexWrap:'wrap',alignItems:'center'}}>
+              {[['all','All',sndList.length],
+                ['google','Google',sndList.filter(s=>s.provider==='google'||s.provider==='other').length],
+                ['outlook','Outlook',sndList.filter(s=>s.provider==='outlook'||s.provider==='other').length]
+              ].map(([v,l,cnt])=>(
+                <button key={v} onClick={()=>setFilt({provider:v})}
+                  style={{padding:'4px 10px',borderRadius:7,fontSize:11,fontFamily:'inherit',cursor:'pointer',
+                    fontWeight:senderFilter.provider===v?600:400,
+                    border:'1.5px solid '+(senderFilter.provider===v?T.indigo:T.border),
+                    background:senderFilter.provider===v?T.indigoLight:T.surface,
+                    color:senderFilter.provider===v?T.indigo:T.textSub}}>
+                  {l} ({cnt})
+                </button>
+              ))}
+              <input placeholder="Email or domain (e.g. soona.com)" value={senderFilter.search}
+                onChange={e=>setFilt({search:e.target.value})}
+                style={{flex:1,minWidth:180,padding:'4px 10px',border:'1.5px solid '+T.border,
+                  borderRadius:7,fontSize:11,fontFamily:'inherit',outline:'none',background:T.surface}} />
+            </div>
+
+            {sendersLoading ? (
+              <div style={{fontSize:12,color:T.textMuted,padding:'12px 0',textAlign:'center'}}>
+                Loading senders...
+              </div>
+            ) : sndList.length === 0 ? (
+              <div style={{fontSize:12,color:T.textMuted,padding:'8px 0'}}>
+                No senders found for this client.
+              </div>
+            ) : (
+              <div style={{border:'1px solid '+T.border,borderRadius:8,overflow:'hidden'}}>
+                {/* Select all header */}
+                <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',
+                  background:T.surfaceAlt,borderBottom:'1px solid '+T.border}}>
+                  <div onClick={()=>{
+                    const ns=new Set(selSend);
+                    pageAllChecked ? pageSenders.forEach(s=>ns.delete(s.id)) : pageSenders.forEach(s=>ns.add(s.id));
+                    setSelSend(ns);
+                  }} style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}}>
+                    <div style={{width:15,height:15,borderRadius:3,flexShrink:0,
+                      border:'2px solid '+(pageAllChecked?T.indigo:'#D1D5DB'),
+                      background:pageAllChecked?T.indigo:'transparent',
+                      display:'flex',alignItems:'center',justifyContent:'center'}}>
+                      {pageAllChecked&&<span style={{color:'#fff',fontSize:8,fontWeight:700}}>✓</span>}
                     </div>
+                    <span style={{fontSize:11,fontWeight:600,color:T.textSub}}>Select all on this page</span>
                   </div>
-
-                  <div style={{display:'flex',flexDirection:'column',gap:10}}>
-                    {steps.map((s,i)=>(
-                      <div key={i} style={{background:T.surface,border:'1px solid '+T.border,
-                        borderRadius:9,overflow:'hidden'}}>
-                        <div style={{padding:'7px 12px',
-                          background:i===0?T.indigoLight:'#F0FDF4',
-                          borderBottom:'1px solid '+T.border,
-                          display:'flex',alignItems:'center',gap:8}}>
-                          <span style={{fontWeight:700,fontSize:12,
-                            color:i===0?T.indigo:T.success}}>
-                            {i===0?'Email 1 — Initial outreach':'Follow-up '+i}
-                          </span>
-                          {i>0 && (
-                            <div style={{display:'flex',alignItems:'center',gap:6,marginLeft:'auto'}}>
-                              <span style={{fontSize:11,color:T.textMuted}}>Day</span>
-                              <input type="number" min={1} value={s.delay_days}
-                                onChange={e=>setDraftSteps(p=>({
-                                  ...p,[draft.id]:steps.map((x,j)=>j===i?{...x,delay_days:parseInt(e.target.value)||1}:x)
-                                }))}
-                                style={{width:44,padding:'2px 6px',border:'1px solid '+T.border,
-                                  borderRadius:5,fontSize:12,textAlign:'center',
-                                  fontFamily:'inherit',outline:'none'}} />
-                              <button onClick={()=>setDraftSteps(p=>({
-                                  ...p,[draft.id]:steps.filter((_,j)=>j!==i)
-                                }))}
-                                style={{background:'none',border:'none',cursor:'pointer',
-                                  fontSize:18,color:T.textMuted,lineHeight:1,padding:0}}>
-                                ×
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                        <div style={{padding:'10px 12px',display:'flex',
-                          flexDirection:'column',gap:7}}>
-                          <input value={s.subject} placeholder="Subject line..."
-                            onChange={e=>setDraftSteps(p=>({
-                              ...p,[draft.id]:steps.map((x,j)=>j===i?{...x,subject:e.target.value}:x)
-                            }))}
-                            style={{width:'100%',padding:'7px 10px',
-                              border:'1px solid '+T.border,borderRadius:7,
-                              fontSize:13,fontFamily:'inherit',outline:'none'}} />
-                          <textarea rows={5} value={s.body} placeholder="Email body..."
-                            onChange={e=>setDraftSteps(p=>({
-                              ...p,[draft.id]:steps.map((x,j)=>j===i?{...x,body:e.target.value}:x)
-                            }))}
-                            style={{width:'100%',padding:'7px 10px',
-                              border:'1px solid '+T.border,borderRadius:7,fontSize:12,
-                              fontFamily:'ui-monospace,monospace',outline:'none',
-                              resize:'vertical',lineHeight:1.6}} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div style={{display:'flex',gap:8,marginTop:10,alignItems:'center'}}>
-                    {steps.length<5 && (
-                      <button onClick={()=>setDraftSteps(p=>({
-                          ...p,[draft.id]:[...steps,{subject:'',body:'',delay_days:steps.length*3}]
-                        }))}
-                        style={{padding:'7px 14px',border:'1.5px dashed '+T.border,
-                          borderRadius:8,background:'transparent',fontSize:12,
-                          cursor:'pointer',color:T.textSub,fontFamily:'inherit',fontWeight:600}}>
-                        + Follow-up
-                      </button>
-                    )}
-                    <button
-                      disabled={!!applying[draft.id+'_seq']||!steps.some(s=>s.subject.trim()||s.body.trim())}
-                      onClick={()=>applySequence(draft)}
-                      style={{marginLeft:'auto',padding:'7px 16px',background:T.indigo,
-                        color:'#fff',border:'none',borderRadius:8,fontSize:12,
-                        fontWeight:600,cursor:'pointer',fontFamily:'inherit',
-                        opacity:(applying[draft.id+'_seq']||!steps.some(s=>s.subject.trim()||s.body.trim()))?0.5:1}}>
-                      {applying[draft.id+'_seq']?'Applying...':draft.has_sequence?'Update Sequence':'Apply Sequence'}
-                    </button>
-                    {actionDone[draft.id+'_seq'] && (
-                      <span style={{fontSize:12,color:T.success,fontWeight:600}}>Applied</span>
-                    )}
-                  </div>
+                  <span style={{marginLeft:'auto',fontSize:11,color:T.textMuted}}>
+                    {filteredSenders.length>0?senderPage*PAGE_SIZE+1:0}–{Math.min((senderPage+1)*PAGE_SIZE,filteredSenders.length)} of {filteredSenders.length}
+                    {senderFilter.provider!=='all'||senderFilter.search?' (filtered)':''}
+                  </span>
                 </div>
 
-                {/* Senders */}
-                <div style={{background:T.surfaceAlt,borderRadius:10,padding:'14px 16px'}}>
-                  <div style={{display:'flex',alignItems:'center',gap:10,
-                    marginBottom:10,flexWrap:'wrap'}}>
-                    <div style={{fontWeight:600,fontSize:14}}>Sender Emails</div>
-                    <span style={{fontSize:11,fontWeight:600,
-                      color:draft.has_senders?T.success:T.warning}}>
-                      {draft.has_senders
-                        ?draft.sender_count+' currently assigned'
-                        :'None assigned yet'}
-                    </span>
-
-                  </div>
-
-                  {(()=>{
-                    const rawList=(allSenders&&allSenders.length>0)?allSenders:localSenders;
-                    const sf=senderFilters2[draft.id]||{provider:'all',search:''};
-                    const setSf=f=>setSenderFilters2(p=>({...p,[draft.id]:{...sf,...f}}));
-                    // Apply provider + search filter
-                    const sndList=rawList.filter(s=>{
-                      if(sf.provider==='google') return s.provider==='google'||s.provider==='other';
-                      if(sf.provider==='outlook') return s.provider==='outlook'||s.provider==='other';
-                      return true;
-                    }).filter(s=>{
-                      if(!sf.search) return true;
-                      const q=sf.search.toLowerCase().trim();
-                      const em=s.email.toLowerCase();
-                      const domain=em.includes('@')?em.split('@')[1]:'';
-                      return em.includes(q)||domain.includes(q)||domain===q;
-                    });
-                    const PAGE_SIZE=10;
-                    const page=senderPages[draft.id]||0;
-                    const totalPages=Math.ceil(sndList.length/PAGE_SIZE);
-                    const pageSenders=sndList.slice(page*PAGE_SIZE,(page+1)*PAGE_SIZE);
-                    const pageAllChecked=pageSenders.length>0&&pageSenders.every(s=>selSend.has(s.id));
-
-                    if(sendersLoading) return <div style={{fontSize:12,color:T.textMuted,padding:'8px 0'}}>Loading senders...</div>;
-                    if(!rawList.length) return <div style={{fontSize:12,color:T.textMuted,padding:'8px 0'}}>No senders found for this client.</div>;
-
-                    return (
-                      <>
-                      <div style={{display:'flex',gap:6,marginBottom:8,alignItems:'center',flexWrap:'wrap'}}>
-                        {[['all','All',rawList.length],['google','Google',rawList.filter(s=>s.provider==='google'||s.provider==='other').length],['outlook','Outlook',rawList.filter(s=>s.provider==='outlook'||s.provider==='other').length]].map(([v,l,cnt])=>(
-                          <button key={v} onClick={()=>{setSf({provider:v});setSenderPages(p=>({...p,[draft.id]:0}));}}
-                            style={{padding:'4px 10px',borderRadius:7,fontSize:11,fontFamily:'inherit',cursor:'pointer',fontWeight:sf.provider===v?600:400,
-                              border:'1.5px solid '+(sf.provider===v?T.indigo:T.border),
-                              background:sf.provider===v?T.indigoLight:T.surface,
-                              color:sf.provider===v?T.indigo:T.textSub}}>
-                            {l} ({cnt})
-                          </button>
-                        ))}
-                        <input placeholder="Email or domain (e.g. soona.com)" value={sf.search}
-                          onChange={e=>{setSf({search:e.target.value});setSenderPages(p=>({...p,[draft.id]:0}));}}
-                          style={{padding:'4px 10px',border:'1.5px solid '+T.border,borderRadius:7,fontSize:11,
-                            fontFamily:'inherit',outline:'none',background:T.surface,minWidth:180,flex:1}} />
-                        <span style={{fontSize:11,color:T.textMuted,whiteSpace:'nowrap'}}>
-                          {sndList.length} shown · {selSend.size} selected
-                        </span>
+                {/* Rows */}
+                {pageSenders.map(s=>{
+                  const checked=selSend.has(s.id);
+                  return (
+                    <div key={s.id} onClick={()=>{const ns=new Set(selSend);checked?ns.delete(s.id):ns.add(s.id);setSelSend(ns);}}
+                      style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',
+                        cursor:'pointer',borderBottom:'1px solid '+T.surfaceAlt,
+                        background:checked?T.indigoLight:'transparent'}}>
+                      <div style={{width:15,height:15,borderRadius:3,flexShrink:0,
+                        border:'2px solid '+(checked?T.indigo:'#D1D5DB'),
+                        background:checked?T.indigo:'transparent',
+                        display:'flex',alignItems:'center',justifyContent:'center'}}>
+                        {checked&&<span style={{color:'#fff',fontSize:8,fontWeight:700}}>✓</span>}
                       </div>
+                      <span style={{fontSize:12,flex:1}}>{s.email}</span>
+                      <span style={{fontSize:11,padding:'1px 6px',borderRadius:4,fontWeight:600,
+                        background:s.provider==='google'?'#EFF6FF':s.provider==='outlook'?'#FFF7ED':'#F3F4F6',
+                        color:s.provider==='google'?T.indigo:s.provider==='outlook'?'#C2410C':'#6B7280'}}>
+                        {s.provider==='google'?'G':s.provider==='outlook'?'O':'—'}
+                      </span>
+                      <span style={{fontSize:11,color:s.warmup_score>=80?T.success:T.textMuted}}>
+                        {s.warmup_score!=null?s.warmup_score:'—'}
+                      </span>
+                      <span style={{fontSize:11,fontWeight:600,padding:'1px 6px',borderRadius:999,
+                        background:(s.status||'').toLowerCase().includes('connect')||(s.status||'').toLowerCase()==='active'?'#DCFCE7':'#FEF2F2',
+                        color:(s.status||'').toLowerCase().includes('connect')||(s.status||'').toLowerCase()==='active'?'#15803D':'#DC2626'}}>
+                        {s.status||'—'}
+                      </span>
+                      <span style={{fontSize:11,color:s.active_campaign_count>0?T.warning:T.textMuted}}>
+                        {s.active_campaign_count>0?s.active_campaign_count+' camps':'free'}
+                      </span>
+                    </div>
+                  );
+                })}
 
-                      <div style={{border:'1px solid '+T.border,borderRadius:8,overflow:'hidden',background:T.surface}}>
-                        {/* Select all header */}
-                        <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',
-                          background:T.surfaceAlt,borderBottom:'1px solid '+T.border}}>
-                          <div onClick={()=>setDraftSenders(p=>{
-                              const ns=new Set(p[draft.id]||[]);
-                              pageAllChecked
-                                ? pageSenders.forEach(s=>ns.delete(s.id))
-                                : pageSenders.forEach(s=>ns.add(s.id));
-                              return {...p,[draft.id]:ns};
-                            })}
-                            style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}}>
-                            <div style={{width:15,height:15,borderRadius:3,
-                              border:'2px solid '+(pageAllChecked?T.indigo:'#D1D5DB'),
-                              background:pageAllChecked?T.indigo:'transparent',
-                              display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
-                              {pageAllChecked&&<span style={{color:'#fff',fontSize:8,fontWeight:700}}>✓</span>}
-                            </div>
-                            <span style={{fontSize:11,fontWeight:600,color:T.textSub}}>
-                              Select all on this page
-                            </span>
-                          </div>
-                          <span style={{marginLeft:'auto',fontSize:11,color:T.textMuted}}>
-                            {sndList.length>0?page*PAGE_SIZE+1:0}–{Math.min((page+1)*PAGE_SIZE,sndList.length)} of {sndList.length}{sf.provider!=='all'||sf.search?' (filtered)':''}
-                          </span>
-                        </div>
-
-                        {/* Sender rows */}
-                        {pageSenders.map(s=>{
-                          const checked=selSend.has(s.id);
-                          return (
-                            <div key={s.id}
-                              onClick={()=>setDraftSenders(p=>{
-                                const ns=new Set(p[draft.id]||[]);
-                                checked?ns.delete(s.id):ns.add(s.id);
-                                return {...p,[draft.id]:ns};
-                              })}
-                              style={{display:'flex',alignItems:'center',gap:10,
-                                padding:'8px 12px',cursor:'pointer',
-                                borderBottom:'1px solid '+T.surfaceAlt,
-                                background:checked?T.indigoLight:'transparent'}}>
-                              <div style={{width:15,height:15,borderRadius:3,flexShrink:0,
-                                border:'2px solid '+(checked?T.indigo:'#D1D5DB'),
-                                background:checked?T.indigo:'transparent',
-                                display:'flex',alignItems:'center',justifyContent:'center'}}>
-                                {checked&&<span style={{color:'#fff',fontSize:8,fontWeight:700}}>✓</span>}
-                              </div>
-                              <span style={{fontSize:12,flex:1}}>{s.email}</span>
-                              <span style={{fontSize:11,padding:'1px 6px',borderRadius:4,fontWeight:600,
-                                background:s.provider==='google'?'#EFF6FF':s.provider==='outlook'?'#FFF7ED':'#F3F4F6',
-                                color:s.provider==='google'?T.indigo:s.provider==='outlook'?'#C2410C':'#6B7280'}}>
-                                {s.provider==='google'?'G':s.provider==='outlook'?'O':'—'}
-                              </span>
-                              <span style={{fontSize:11,color:s.warmup_score>=80?T.success:T.textMuted}}>
-                                {s.warmup_score!=null?s.warmup_score:'—'}
-                              </span>
-                              <span style={{fontSize:11,fontWeight:600,padding:'1px 6px',borderRadius:999,
-                                background:s.status&&(s.status.toLowerCase()==='connected'||s.status.toLowerCase()==='active')?'#DCFCE7':'#FEF2F2',
-                                color:s.status&&(s.status.toLowerCase()==='connected'||s.status.toLowerCase()==='active')?'#15803D':'#DC2626'}}>
-                                {s.status||'—'}
-                              </span>
-                              <span style={{fontSize:11,color:s.active_campaign_count>0?T.warning:T.textMuted}}>
-                                {s.active_campaign_count>0?s.active_campaign_count+' camps':'free'}
-                              </span>
-                            </div>
-                          );
-                        })}
-
-                        {/* Pagination */}
-                        {totalPages>1 && (
-                          <div style={{display:'flex',alignItems:'center',justifyContent:'center',
-                            gap:8,padding:'8px 12px',borderTop:'1px solid '+T.border,
-                            background:T.surfaceAlt}}>
-                            <button onClick={()=>setSenderPages(p=>({...p,[draft.id]:Math.max(0,page-1)}))}
-                              disabled={page===0}
-                              style={{width:28,height:28,border:'1px solid '+T.border,borderRadius:6,
-                                background:T.surface,cursor:page===0?'default':'pointer',
-                                fontSize:14,opacity:page===0?0.4:1,fontFamily:'inherit'}}>
-                              ←
-                            </button>
-                            {Array.from({length:totalPages},(_,i)=>(
-                              <button key={i} onClick={()=>setSenderPages(p=>({...p,[draft.id]:i}))}
-                                style={{width:28,height:28,border:'1px solid '+(i===page?T.indigo:T.border),
-                                  borderRadius:6,background:i===page?T.indigoLight:T.surface,
-                                  color:i===page?T.indigo:T.textSub,cursor:'pointer',
-                                  fontSize:12,fontWeight:i===page?700:400,fontFamily:'inherit'}}>
-                                {i+1}
-                              </button>
-                            ))}
-                            <button onClick={()=>setSenderPages(p=>({...p,[draft.id]:Math.min(totalPages-1,page+1)}))}
-                              disabled={page===totalPages-1}
-                              style={{width:28,height:28,border:'1px solid '+T.border,borderRadius:6,
-                                background:T.surface,cursor:page===totalPages-1?'default':'pointer',
-                                fontSize:14,opacity:page===totalPages-1?0.4:1,fontFamily:'inherit'}}>
-                              →
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                      </>
-                    );
-                  })()}
-
-                  <div style={{display:'flex',gap:8,marginTop:10,alignItems:'center'}}>
-                    <button
-                      disabled={!!applying[draft.id+'_snd']||selSend.size===0}
-                      onClick={()=>applySenders(draft)}
-                      style={{marginLeft:'auto',padding:'7px 16px',background:T.success,
-                        color:'#fff',border:'none',borderRadius:8,fontSize:12,
-                        fontWeight:600,cursor:'pointer',fontFamily:'inherit',
-                        opacity:(applying[draft.id+'_snd']||selSend.size===0)?0.5:1}}>
-                      {applying[draft.id+'_snd']?'Assigning...':draft.has_senders?'Update Senders':'Assign Senders'}
-                    </button>
-                    {actionDone[draft.id+'_snd'] && (
-                      <span style={{fontSize:12,color:T.success,fontWeight:600}}>Assigned</span>
-                    )}
+                {/* Pagination */}
+                {totalPages>1 && (
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'center',
+                    gap:6,padding:'8px',borderTop:'1px solid '+T.border,background:T.surfaceAlt}}>
+                    <button onClick={()=>setSenderPage(p=>Math.max(0,p-1))} disabled={senderPage===0}
+                      style={{width:28,height:28,border:'1px solid '+T.border,borderRadius:6,
+                        background:T.surface,cursor:senderPage===0?'default':'pointer',
+                        fontSize:14,opacity:senderPage===0?0.4:1,fontFamily:'inherit'}}>←</button>
+                    {Array.from({length:Math.min(totalPages,7)},(_,i)=>{
+                      // Show pages around current
+                      let pg = i;
+                      if(totalPages>7) {
+                        const start=Math.max(0,senderPage-3);
+                        pg=start+i;
+                        if(pg>=totalPages) return null;
+                      }
+                      return (
+                        <button key={pg} onClick={()=>setSenderPage(pg)}
+                          style={{width:28,height:28,border:'1px solid '+(pg===senderPage?T.indigo:T.border),
+                            borderRadius:6,background:pg===senderPage?T.indigoLight:T.surface,
+                            color:pg===senderPage?T.indigo:T.textSub,cursor:'pointer',
+                            fontSize:12,fontWeight:pg===senderPage?700:400,fontFamily:'inherit'}}>
+                          {pg+1}
+                        </button>
+                      );
+                    })}
+                    <button onClick={()=>setSenderPage(p=>Math.min(totalPages-1,p+1))} disabled={senderPage===totalPages-1}
+                      style={{width:28,height:28,border:'1px solid '+T.border,borderRadius:6,
+                        background:T.surface,cursor:senderPage===totalPages-1?'default':'pointer',
+                        fontSize:14,opacity:senderPage===totalPages-1?0.4:1,fontFamily:'inherit'}}>→</button>
                   </div>
-                </div>
-
+                )}
               </div>
             )}
+
+            <div style={{display:'flex',gap:8,marginTop:12,alignItems:'center'}}>
+              <button disabled={!!applying.snd||selSend.size===0} onClick={applySenders}
+                style={{marginLeft:'auto',padding:'7px 16px',background:T.success,color:'#fff',
+                  border:'none',borderRadius:8,fontSize:13,fontWeight:600,cursor:'pointer',
+                  fontFamily:'inherit',opacity:(applying.snd||selSend.size===0)?0.5:1}}>
+                {applying.snd?'Assigning...':draft.has_senders?'Update Senders':'Assign Senders'}
+              </button>
+              {actionDone.snd && <span style={{fontSize:12,color:T.success,fontWeight:600}}>Assigned</span>}
+            </div>
           </div>
-        );
-      })}
+
+        </div>
+      )}
+
+      {!draft && selClient && !loadingDrafts && drafts.length > 0 && (
+        <div style={{textAlign:'center',padding:'48px',color:T.textMuted,fontSize:14,
+          background:T.surface,borderRadius:12,border:'1px solid '+T.border}}>
+          Select a draft campaign from the dropdown above to get started.
+        </div>
+      )}
     </div>
   );
 }

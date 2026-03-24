@@ -103,33 +103,37 @@ app.get('/clients/:id/sender-emails/raw', async (req, res) => {
 
 app.get('/clients/:id/sender-emails', async (req, res) => {
   try {
-    // Fetch ALL sender emails across all pages
+    // Fetch ALL sender emails — try large page size first, then paginate
     let senders = [];
-    let page = 1;
-    while (true) {
-      const base = await eb(req.params.id, `/api/sender-emails?per_page=100&page=${page}`);
-      const arr = Array.isArray(base) ? base : (base.data || []);
-      senders = senders.concat(arr);
-      // Stop if we got fewer than 100 (last page) or if no pagination
-      if (arr.length < 100) break;
-      page++;
-      if (page > 30) break; // safety cap at 3000 senders
+    try {
+      // Attempt 1: fetch up to 3000 in one shot
+      const bigFetch = await eb(req.params.id, '/api/sender-emails?per_page=3000');
+      const bigArr = Array.isArray(bigFetch) ? bigFetch : (bigFetch.data || []);
+      if (bigArr.length > 0) {
+        senders = bigArr;
+      } else {
+        // Attempt 2: paginate with page param
+        let page = 1;
+        while (true) {
+          const base = await eb(req.params.id, `/api/sender-emails?per_page=100&page=${page}`);
+          const arr = Array.isArray(base) ? base : (base.data || []);
+          senders = senders.concat(arr);
+          if (arr.length < 100) break;
+          page++;
+          if (page > 30) break;
+        }
+      }
+    } catch(fetchErr) {
+      // Final fallback: just get whatever we can
+      const base = await eb(req.params.id, '/api/sender-emails?per_page=500');
+      senders = Array.isArray(base) ? base : (base.data || []);
     }
 
     // Fetch warmup data and merge
     let warmupMap = {};
     try {
-      let warmupAll = [];
-      let wp = 1;
-      while (true) {
-        const w = await eb(req.params.id, `/api/warmup/sender-emails?per_page=100&page=${wp}`);
-        const wa = Array.isArray(w) ? w : (w.data || []);
-        warmupAll = warmupAll.concat(wa);
-        if (wa.length < 100) break;
-        wp++;
-        if (wp > 30) break;
-      }
-      const w = warmupAll;
+      const wFetch = await eb(req.params.id, '/api/warmup/sender-emails?per_page=3000');
+      const w = Array.isArray(wFetch) ? wFetch : (wFetch.data || []);
       const warmupArr = Array.isArray(w) ? w : (w.data || []);
       warmupArr.forEach(ws => { warmupMap[ws.sender_email_id ?? ws.id] = ws; });
     } catch (_) {}
