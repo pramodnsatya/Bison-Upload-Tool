@@ -1571,14 +1571,7 @@ function DraftsTab({ clientId, clients, allSenders }) {
                 {draft.has_sequence?'Has '+draft.sequence_count+' steps — editing will replace them':'Not configured'}
               </span>
               <div style={{marginLeft:'auto',display:'flex',gap:6}}>
-                {templates.length>0 && (
-                  <select defaultValue="" onChange={e=>{const t=templates.find(x=>x.id===e.target.value);if(t)loadTemplate(t);e.target.value='';}}
-                    style={{padding:'5px 10px',border:'1.5px solid '+T.border,borderRadius:7,fontSize:12,
-                      fontFamily:'inherit',background:T.surface,outline:'none',cursor:'pointer'}}>
-                    <option value="" disabled>Saved template...</option>
-                    {templates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
-                  </select>
-                )}
+
                 {selClient && (
                   <select defaultValue=""
                     onChange={async e=>{
