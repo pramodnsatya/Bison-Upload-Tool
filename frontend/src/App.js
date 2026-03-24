@@ -1670,7 +1670,14 @@ function DraftsTab({ clientId, clients, allSenders }) {
                     </div>
                     <span style={{fontSize:11,fontWeight:600,color:T.textSub}}>Select all on this page</span>
                   </div>
-                  <span style={{marginLeft:'auto',fontSize:11,color:T.textMuted}}>
+                  <div style={{display:'flex',gap:0,marginLeft:'auto',alignItems:'center'}}>
+                    <span style={{fontSize:10,color:T.textMuted,minWidth:44,textAlign:'right',fontWeight:600}}>WU SCORE</span>
+                    <span style={{fontSize:10,color:T.textMuted,minWidth:48,textAlign:'right',fontWeight:600}}>WU SENT</span>
+                    <span style={{fontSize:10,color:T.textMuted,minWidth:48,textAlign:'right',fontWeight:600}}>SENT</span>
+                    <span style={{fontSize:10,color:T.textMuted,minWidth:72,textAlign:'right',fontWeight:600}}>STATUS</span>
+                    <span style={{fontSize:10,color:T.textMuted,minWidth:48,textAlign:'right',fontWeight:600}}>CAMPS</span>
+                  </div>
+                  <span style={{fontSize:11,color:T.textMuted,marginLeft:8}}>
                     {filteredSenders.length>0?senderPage*PAGE_SIZE+1:0}–{Math.min((senderPage+1)*PAGE_SIZE,filteredSenders.length)} of {filteredSenders.length}
                     {senderFilter.provider!=='all'||senderFilter.search?' (filtered)':''}
                   </span>
@@ -1691,20 +1698,21 @@ function DraftsTab({ clientId, clients, allSenders }) {
                         {checked&&<span style={{color:'#fff',fontSize:8,fontWeight:700}}>✓</span>}
                       </div>
                       <span style={{fontSize:12,flex:1}}>{s.email}</span>
-                      <span style={{fontSize:11,padding:'1px 6px',borderRadius:4,fontWeight:600,
-                        background:s.provider==='google'?'#EFF6FF':s.provider==='outlook'?'#FFF7ED':'#F3F4F6',
-                        color:s.provider==='google'?T.indigo:s.provider==='outlook'?'#C2410C':'#6B7280'}}>
-                        {s.provider==='google'?'G':s.provider==='outlook'?'O':'—'}
-                      </span>
-                      <span style={{fontSize:11,color:s.warmup_score>=80?T.success:T.textMuted}}>
+                      <span style={{fontSize:11,color:s.warmup_score>=80?T.success:s.warmup_score>=50?T.warning:T.textMuted,fontWeight:600,minWidth:32,textAlign:'right'}}>
                         {s.warmup_score!=null?s.warmup_score:'—'}
                       </span>
-                      <span style={{fontSize:11,fontWeight:600,padding:'1px 6px',borderRadius:999,
+                      <span style={{fontSize:11,color:T.textSub,minWidth:40,textAlign:'right'}}>
+                        {s.warmup_sent!=null?s.warmup_sent.toLocaleString():'—'}
+                      </span>
+                      <span style={{fontSize:11,color:T.textSub,minWidth:40,textAlign:'right'}}>
+                        {s.emails_sent!=null?s.emails_sent.toLocaleString():'—'}
+                      </span>
+                      <span style={{fontSize:11,fontWeight:600,padding:'1px 6px',borderRadius:999,flexShrink:0,
                         background:(s.status||'').toLowerCase().includes('connect')||(s.status||'').toLowerCase()==='active'?'#DCFCE7':'#FEF2F2',
                         color:(s.status||'').toLowerCase().includes('connect')||(s.status||'').toLowerCase()==='active'?'#15803D':'#DC2626'}}>
                         {s.status||'—'}
                       </span>
-                      <span style={{fontSize:11,color:s.active_campaign_count>0?T.warning:T.textMuted}}>
+                      <span style={{fontSize:11,color:s.active_campaign_count>0?T.warning:T.textMuted,flexShrink:0}}>
                         {s.active_campaign_count>0?s.active_campaign_count+' camps':'free'}
                       </span>
                     </div>
