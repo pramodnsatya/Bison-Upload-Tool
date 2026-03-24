@@ -287,13 +287,13 @@ app.post('/clients/:id/campaigns', async (req, res) => {
       await eb(req.params.id, `/api/campaigns/${id}/schedule`, 'POST', {
         monday: true, tuesday: true, wednesday: true,
         thursday: true, friday: true, saturday: false, sunday: false,
-        start_time: '08:00:00', end_time: '19:00:00', timezone: 'America/New_York',
+        start_time: '08:00:00', end_time: '17:00:00', timezone: 'America/New_York',
       });
     } catch(e1) {
       try { await eb(req.params.id, `/api/campaigns/${id}/schedule`, 'PUT', {
         monday: true, tuesday: true, wednesday: true,
         thursday: true, friday: true, saturday: false, sunday: false,
-        start_time: '08:00:00', end_time: '19:00:00', timezone: 'America/New_York',
+        start_time: '08:00:00', end_time: '17:00:00', timezone: 'America/New_York',
       }); } catch(_) {}
     }
 
@@ -585,13 +585,13 @@ app.patch('/clients/:id/draft-campaigns/:cid/settings', async (req, res) => {
         await eb(req.params.id, `/api/campaigns/${req.params.cid}/schedule`, 'POST', {
         monday: true, tuesday: true, wednesday: true,
         thursday: true, friday: true, saturday: false, sunday: false,
-        start_time: '08:00:00', end_time: '19:00:00', timezone: 'America/New_York',
+        start_time: '08:00:00', end_time: '17:00:00', timezone: 'America/New_York',
       });
       } catch(_) {
         try { await eb(req.params.id, `/api/campaigns/${req.params.cid}/schedule`, 'PUT', {
         monday: true, tuesday: true, wednesday: true,
         thursday: true, friday: true, saturday: false, sunday: false,
-        start_time: '08:00:00', end_time: '19:00:00', timezone: 'America/New_York',
+        start_time: '08:00:00', end_time: '17:00:00', timezone: 'America/New_York',
       }); } catch(_) {}
       }
     }
