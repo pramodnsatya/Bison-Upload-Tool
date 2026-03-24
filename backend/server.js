@@ -597,13 +597,6 @@ app.patch('/clients/:id/draft-campaigns/:cid/settings', async (req, res) => {
 });
 
 
-  app.use(express.static(buildPath));
-  app.get('*', (_req, res) => res.sendFile(join(buildPath, 'index.html')));
-}
-
-const PORT = process.env.PORT || 3847;
-app.listen(PORT, () => console.log(`✅ Server on port ${PORT}`));
-
 // Debug: see raw pagination structure from sender-emails API
 app.get('/clients/:id/sender-emails/pagination-debug', async (req, res) => {
   try {
@@ -622,3 +615,10 @@ app.get('/clients/:id/sender-emails/pagination-debug', async (req, res) => {
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
+
+  app.use(express.static(buildPath));
+  app.get('*', (_req, res) => res.sendFile(join(buildPath, 'index.html')));
+}
+
+const PORT = process.env.PORT || 3847;
+app.listen(PORT, () => console.log(`✅ Server on port ${PORT}`));
