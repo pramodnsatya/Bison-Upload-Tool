@@ -624,18 +624,54 @@ app.get('/clients/:id/sender-emails/pagination-debug', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Debug: see raw campaign detail to check sender ID field names
+// Debug: find campaign by slug/name and inspect sender fields
 app.get('/clients/:id/campaigns/:cid/detail-debug', async (req, res) => {
   try {
-    const d = await eb(req.params.id, `/api/campaigns/${req.params.cid}`);
-    const camp = d.data || d;
+    // First try direct lookup (works if numeric ID)
+    let camp = null;
+    try {
+      const d = await eb(req.params.id, `/api/campaigns/${req.params.cid}`);
+      camp = d.data || d;
+    } catch(_) {}
+
+    // If not found, search campaigns list for matching UUID or name
+    if (!camp || !camp.id) {
+      const list = await eb(req.params.id, '/api/campaigns?per_page=200');
+      const arr = Array.isArray(list) ? list : (list.data || []);
+      // Match by UUID slug or name
+      const found = arr.find(c => 
+        String(c.id) === String(req.params.cid) ||
+        c.uuid === req.params.cid ||
+        c.slug === req.params.cid
+      );
+      if (found) {
+        // Now fetch full detail with numeric ID
+        const d2 = await eb(req.params.id, `/api/campaigns/${found.id}`);
+        camp = d2.data || d2;
+      } else {
+        // Just return first active campaign as sample
+        const active = arr.find(c => c.status === 'active' || c.status === 'running') || arr[0];
+        if (active) {
+          const d3 = await eb(req.params.id, `/api/campaigns/${active.id}`);
+          camp = d3.data || d3;
+        }
+      }
+    }
+
+    if (!camp) return res.json({ error: 'No campaigns found' });
     res.json({
+      id: camp.id,
+      name: camp.name,
       status: camp.status,
-      keys: Object.keys(camp),
+      all_keys: Object.keys(camp),
       sender_email_ids: camp.sender_email_ids,
       sender_emails: camp.sender_emails?.slice(0,3),
       senders: camp.senders?.slice(0,3),
       email_accounts: camp.email_accounts?.slice(0,3),
+      // Show any key that might contain sender info
+      sender_related: Object.entries(camp).filter(([k]) => 
+        k.toLowerCase().includes('sender') || k.toLowerCase().includes('email_account') || k.toLowerCase().includes('inbox')
+      ).reduce((acc, [k,v]) => ({...acc, [k]:v}), {}),
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
