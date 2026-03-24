@@ -981,7 +981,7 @@ export default function App() {
                       <label style={{ fontSize:11, fontWeight:600, color:T.textMuted, textTransform:'uppercase', letterSpacing:'0.05em', display:'block', marginBottom:5 }}>
                         Body
                       </label>
-                      <textarea rows={7} value={s.body}
+                      <textarea rows={18} value={s.body}
                         onChange={e=>setEmailSteps(prev=>prev.map((x,j)=>j===i?{...x,body:e.target.value}:x))}
                         placeholder={i===0?'Hi {first_name},\n\n[your message]\n\nBest,\n[Your name]':'[follow-up body]'}
                         style={{ width:'100%', padding:'10px 12px', border:`1.5px solid ${T.border}`, borderRadius:9,
@@ -1601,7 +1601,7 @@ function DraftsTab({ clientId, clients, allSenders }) {
                       onChange={e=>setSteps(prev=>prev.map((x,j)=>j===i?{...x,subject:e.target.value}:x))}
                       style={{width:'100%',padding:'7px 10px',border:'1px solid '+T.border,
                         borderRadius:7,fontSize:13,fontFamily:'inherit',outline:'none'}} />
-                    <textarea rows={5} value={s.body} placeholder="Email body..."
+                    <textarea rows={18} value={s.body} placeholder="Email body..."
                       onChange={e=>setSteps(prev=>prev.map((x,j)=>j===i?{...x,body:e.target.value}:x))}
                       style={{width:'100%',padding:'7px 10px',border:'1px solid '+T.border,
                         borderRadius:7,fontSize:12,fontFamily:'ui-monospace,monospace',
@@ -2112,7 +2112,7 @@ function TemplatesTab({ clientId, clients, onUseTemplate }) {
                   <input value={s.subject} onChange={e=>setManualSteps(prev=>prev.map((x,j)=>j===i?{...x,subject:e.target.value}:x))}
                     placeholder={i===0?'Subject line':'Re: [original subject]'}
                     style={{ width:'100%', padding:'8px 12px', border:`1.5px solid ${T2.border}`, borderRadius:8, fontSize:13, fontFamily:'inherit', outline:'none', background:T2.surface }} />
-                  <textarea rows={5} value={s.body} onChange={e=>setManualSteps(prev=>prev.map((x,j)=>j===i?{...x,body:e.target.value}:x))}
+                  <textarea rows={18} value={s.body} onChange={e=>setManualSteps(prev=>prev.map((x,j)=>j===i?{...x,body:e.target.value}:x))}
                     placeholder={i===0?'Hi {first_name},\n\n[email body]\n\nBest,\n[Your name]':'[follow-up body]'}
                     style={{ width:'100%', padding:'8px 12px', border:`1.5px solid ${T2.border}`, borderRadius:8, fontSize:12, fontFamily:'monospace', outline:'none', resize:'vertical', lineHeight:1.7, background:T2.surface }} />
                 </div>
