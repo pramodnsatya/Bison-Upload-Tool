@@ -1679,6 +1679,7 @@ function DraftsTab({ clientId, clients, allSenders }) {
                       <th style={{padding:'8px 8px',textAlign:'right',fontSize:11,fontWeight:600,color:T.textMuted,whiteSpace:'nowrap'}}>WU SCORE</th>
                       <th style={{padding:'8px 8px',textAlign:'right',fontSize:11,fontWeight:600,color:T.textMuted,whiteSpace:'nowrap'}}>WU SENT</th>
                       <th style={{padding:'8px 8px',textAlign:'right',fontSize:11,fontWeight:600,color:T.textMuted,whiteSpace:'nowrap'}}>TOTAL SENT</th>
+                      <th style={{padding:'8px 8px',textAlign:'center',fontSize:11,fontWeight:600,color:T.textMuted}}>BOUNCE</th>
                       <th style={{padding:'8px 8px',textAlign:'center',fontSize:11,fontWeight:600,color:T.textMuted}}>STATUS</th>
                       <th style={{padding:'8px 12px',textAlign:'center',fontSize:11,fontWeight:600,color:T.textMuted}}>ACTIVE IN</th>
                     </tr>
@@ -1705,6 +1706,12 @@ function DraftsTab({ clientId, clients, allSenders }) {
                           <td style={{padding:'8px 8px',textAlign:'right',fontWeight:600,fontSize:12,color:scColor}}>{sc??'—'}</td>
                           <td style={{padding:'8px 8px',textAlign:'right',fontSize:12,color:T.textSub}}>{s.warmup_sent!=null?Number(s.warmup_sent).toLocaleString():'—'}</td>
                           <td style={{padding:'8px 8px',textAlign:'right',fontSize:12,color:T.textSub}}>{s.emails_sent!=null?Number(s.emails_sent).toLocaleString():'—'}</td>
+                          <td style={{padding:'8px 8px',textAlign:'center'}}>
+                            {s.bounce_protection
+                              ?<span style={{fontSize:11,fontWeight:600,color:'#15803D',background:'#DCFCE7',padding:'2px 7px',borderRadius:999}}>✓</span>
+                              :<span style={{fontSize:11,color:T.textMuted}}>—</span>
+                            }
+                          </td>
                           <td style={{padding:'8px 8px',textAlign:'center'}}>
                             <span style={{fontSize:11,fontWeight:600,padding:'2px 8px',borderRadius:999,whiteSpace:'nowrap',
                               background:isOk?'#DCFCE7':'#FEF2F2',color:isOk?'#15803D':'#DC2626'}}>

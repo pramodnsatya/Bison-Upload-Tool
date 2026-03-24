@@ -155,10 +155,18 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
       );
 
       details.forEach(raw => {
+        // Handle both wrapped {data: {...}} and unwrapped responses
         const c = raw.data || raw;
-        // Only count active/running/sending — exclude draft, paused, completed, cancelled
-        const isActive = c.status === 'active' || c.status === 'running' || c.status === 'sending';
-        const ids = c.sender_email_ids || c.sender_emails?.map(s => s.id) || [];
+        const st = (c.status || '').toLowerCase();
+        const isActive = st === 'active' || st === 'running' || st === 'sending' || st === 'launched';
+
+        // Try every possible field name for sender IDs
+        let ids = [];
+        if (Array.isArray(c.sender_email_ids)) ids = c.sender_email_ids;
+        else if (Array.isArray(c.sender_emails)) ids = c.sender_emails.map(s => s.id ?? s);
+        else if (Array.isArray(c.senders)) ids = c.senders.map(s => s.id ?? s);
+        else if (Array.isArray(c.email_accounts)) ids = c.email_accounts.map(s => s.id ?? s);
+
         ids.forEach(id => {
           const sid = String(id);
           senderCampaignCount[sid] = (senderCampaignCount[sid] || 0) + 1;
@@ -612,6 +620,22 @@ app.get('/clients/:id/sender-emails/pagination-debug', async (req, res) => {
       per100_count: (Array.isArray(r3) ? r3 : r3.data || []).length,
       per100_meta: r3.meta || r3.pagination || null,
       raw_top_level: typeof r1 === 'object' && !Array.isArray(r1) ? Object.keys(r1) : 'is array',
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Debug: see raw campaign detail to check sender ID field names
+app.get('/clients/:id/campaigns/:cid/detail-debug', async (req, res) => {
+  try {
+    const d = await eb(req.params.id, `/api/campaigns/${req.params.cid}`);
+    const camp = d.data || d;
+    res.json({
+      status: camp.status,
+      keys: Object.keys(camp),
+      sender_email_ids: camp.sender_email_ids,
+      sender_emails: camp.sender_emails?.slice(0,3),
+      senders: camp.senders?.slice(0,3),
+      email_accounts: camp.email_accounts?.slice(0,3),
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
