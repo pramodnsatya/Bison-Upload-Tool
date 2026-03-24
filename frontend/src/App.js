@@ -56,7 +56,20 @@ function buildCampaignPlan(base, counts, segments, n) {
     }
     return avail.map(t => ({ type:t, name:`${base}_${t}`, leads:t==='seg'?segments.seg||[]:segments[t]||[], senderType:t==='outlook'?'outlook':'google' }));
   }
-  return avail.map(t => ({ type:t, name:`${base}_${t}`, leads:t==='seg'?segments.seg||[]:segments[t]||[], senderType:t==='outlook'?'outlook':'google' }));
+  if (n === 3) {
+    return avail.map(t => ({ type:t, name:`${base}_${t}`, leads:t==='seg'?segments.seg||[]:segments[t]||[], senderType:t==='outlook'?'outlook':'google' }));
+  }
+  // n === 4: separate SEG campaign sent via Outlook senders
+  const base3 = avail.map(t => ({ type:t, name:`${base}_${t}`, leads:t==='seg'?segments.seg||[]:segments[t]||[], senderType:t==='outlook'?'outlook':'google' }));
+  if (avail.includes('seg')) {
+    // Replace seg (google senders) with two: seg_google + seg_outlook
+    return [
+      ...base3.filter(p => p.type !== 'seg'),
+      { type:'seg', name:`${base}_seg_google`, leads:segments.seg||[], senderType:'google' },
+      { type:'seg_outlook', name:`${base}_seg_outlook`, leads:segments.seg||[], senderType:'outlook' },
+    ].filter(p=>p.leads.length>0);
+  }
+  return base3;
 }
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
@@ -382,6 +395,7 @@ export default function App() {
   const [allSenders,   setAllSenders]   = useState([]);
   const [selSenders,   setSelSenders]   = useState({});
   const [senderFilters, setSenderFilters] = useState({}); // per campaign: {provider:'all'|'google'|'outlook', search:''}
+  const [deployPages, setDeployPages] = useState({}); // per campaign: current page number
 
   useEffect(()=>{ api('/clients').then(setClients).catch(()=>{}); },[]);
 
@@ -700,6 +714,52 @@ export default function App() {
         {/* ── STEP 3 ────────────────────────────────────────────────────── */}
         {step===3 && counts && (
           <div style={{ display:'flex', flexDirection:'column', gap:20 }}>
+            {/* Sender availability summary */}
+            {allSenders.length > 0 && (() => {
+              const activeSenders = allSenders.filter(s => {
+                const st = (s.status||'').toLowerCase();
+                return st === 'connected' || st === 'active';
+              });
+              const readyG = activeSenders.filter(s =>
+                (s.provider === 'google' || s.provider === 'other') &&
+                (s.warmup_sent > 100 || s.emails_sent > 0)
+              );
+              const readyO = activeSenders.filter(s =>
+                (s.provider === 'outlook') &&
+                (s.warmup_sent > 100 || s.emails_sent > 0)
+              );
+              const capG = readyG.length * 15;
+              const capO = readyO.length * 5;
+              return (
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+                  <div style={{ background:'#EFF6FF', border:'1.5px solid #BFDBFE', borderRadius:10, padding:'12px 16px' }}>
+                    <div style={{ fontSize:11, fontWeight:600, color:'#1E40AF', textTransform:'uppercase', letterSpacing:'0.04em', marginBottom:6 }}>
+                      Google senders ready
+                    </div>
+                    <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
+                      <span style={{ fontSize:28, fontWeight:800, color:'#1D4ED8' }}>{readyG.length}</span>
+                      <span style={{ fontSize:12, color:'#3B82F6' }}>senders · {capG.toLocaleString()} leads/day capacity</span>
+                    </div>
+                    <div style={{ fontSize:11, color:'#60A5FA', marginTop:3 }}>
+                      Connected + warmup &gt;100 or have sent emails
+                    </div>
+                  </div>
+                  <div style={{ background:'#FFF7ED', border:'1.5px solid #FED7AA', borderRadius:10, padding:'12px 16px' }}>
+                    <div style={{ fontSize:11, fontWeight:600, color:'#C2410C', textTransform:'uppercase', letterSpacing:'0.04em', marginBottom:6 }}>
+                      Outlook senders ready
+                    </div>
+                    <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
+                      <span style={{ fontSize:28, fontWeight:800, color:'#EA580C' }}>{readyO.length}</span>
+                      <span style={{ fontSize:12, color:'#F97316' }}>senders · {capO.toLocaleString()} leads/day capacity</span>
+                    </div>
+                    <div style={{ fontSize:11, color:'#FDBA74', marginTop:3 }}>
+                      Connected + warmup &gt;100 or have sent emails
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Count cards */}
             <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12 }}>
               {[
@@ -1074,9 +1134,8 @@ export default function App() {
             {created.map(camp => {
               const filt = senderFilters[camp.name] || { provider: 'all', search: '' };
               const setFilt = (f) => { setSenderFilters(prev => ({ ...prev, [camp.name]: { ...filt, ...f } })); };
-              const campPageKey = 'deploy_' + camp.name;
-              const campPage = (senderFilters[campPageKey + '_page']) || 0;
-              const setCampPage = (p) => setSenderFilters(prev => ({ ...prev, [campPageKey + '_page']: p }));
+              const campPage = deployPages[camp.name] || 0;
+              const setCampPage = (p) => setDeployPages(prev => ({ ...prev, [camp.name]: p }));
 
               const needed = Math.ceil(camp.leads.length / (camp.senderType === 'outlook' ? 5 : 15));
               const sel = selSenders[camp.name] || new Set();
