@@ -513,15 +513,8 @@ export default function App() {
       const senders = await api(`/clients/${clientId}/sender-emails`);
       const list = Array.isArray(senders) ? senders : [];
       setAllSenders(list);
-      const sel = {};
-      for (const c of created) {
-        const pool = list.filter(c.senderType==='outlook'?isOutlookSender:isGoogleSender).sort((a,b)=>{
-          const sa=a.warmup_score??a.reputation_score??0, sb=b.warmup_score??b.reputation_score??0;
-          return sb!==sa ? sb-sa : (a.total_sent??0)-(b.total_sent??0);
-        });
-        sel[c.name] = new Set(pool.slice(0, calcNeeded(c.leads.length, c.senderType)).map(s=>s.id));
-      }
-      setSelSenders(sel);
+      // Don't auto-select senders — let user pick manually in Step 7
+      setSelSenders({});
       setStep(6); // Go to Copy step first
     } catch(e) { setError(e.message); }
     finally { setLoading(false); }
