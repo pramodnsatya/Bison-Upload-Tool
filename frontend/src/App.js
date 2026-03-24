@@ -1056,7 +1056,14 @@ export default function App() {
 
               // All tabs show all senders — tabs only highlight the type, search filters by email
               const pool = basePool
-                .filter(s => !filt.search || s.email.toLowerCase().includes(filt.search.toLowerCase()));
+                .filter(s => {
+                  if (!filt.search) return true;
+                  const q = filt.search.toLowerCase().trim();
+                  const em = s.email.toLowerCase();
+                  const domain = em.includes('@') ? em.split('@')[1] : '';
+                  // Match full email OR just the domain portion
+                  return em.includes(q) || domain.includes(q) || domain === q;
+                });
 
               const needed = calcNeeded(camp.leads.length, camp.senderType);
               const sel = selSenders[camp.name] || new Set();
@@ -1100,9 +1107,9 @@ export default function App() {
                       </button>
                     ))}
                     {/* Search */}
-                    <input placeholder="Search email..." value={filt.search} onChange={e=>setFilt({search:e.target.value})}
+                    <input placeholder="Search by email or domain (e.g. soona.com)" value={filt.search} onChange={e=>setFilt({search:e.target.value})}
                       style={{ padding:'5px 12px', border:`1.5px solid ${T.border}`, borderRadius:8, fontSize:12,
-                        fontFamily:'inherit', outline:'none', background:T.surface, minWidth:180 }} />
+                        fontFamily:'inherit', outline:'none', background:T.surface, minWidth:220 }} />
                     {/* Select all / none */}
                     <div style={{ marginLeft:'auto', display:'flex', gap:6 }}>
                       <button onClick={selAll}  style={{ padding:'5px 10px', borderRadius:7, border:`1px solid ${T.border}`, background:T.surface, cursor:'pointer', fontSize:11, color:T.textSub, fontFamily:'inherit' }}>All</button>
@@ -1645,7 +1652,13 @@ function DraftsTab({ clientId, clients, allSenders }) {
                       if(sf.provider==='google') return s.provider==='google'||s.provider==='other';
                       if(sf.provider==='outlook') return s.provider==='outlook'||s.provider==='other';
                       return true;
-                    }).filter(s=>!sf.search||s.email.toLowerCase().includes(sf.search.toLowerCase()));
+                    }).filter(s=>{
+                      if(!sf.search) return true;
+                      const q=sf.search.toLowerCase().trim();
+                      const em=s.email.toLowerCase();
+                      const domain=em.includes('@')?em.split('@')[1]:'';
+                      return em.includes(q)||domain.includes(q)||domain===q;
+                    });
                     const PAGE_SIZE=10;
                     const page=senderPages[draft.id]||0;
                     const totalPages=Math.ceil(sndList.length/PAGE_SIZE);
@@ -1667,10 +1680,10 @@ function DraftsTab({ clientId, clients, allSenders }) {
                             {l} ({cnt})
                           </button>
                         ))}
-                        <input placeholder="Search email..." value={sf.search}
+                        <input placeholder="Email or domain (e.g. soona.com)" value={sf.search}
                           onChange={e=>{setSf({search:e.target.value});setSenderPages(p=>({...p,[draft.id]:0}));}}
                           style={{padding:'4px 10px',border:'1.5px solid '+T.border,borderRadius:7,fontSize:11,
-                            fontFamily:'inherit',outline:'none',background:T.surface,minWidth:150,flex:1}} />
+                            fontFamily:'inherit',outline:'none',background:T.surface,minWidth:180,flex:1}} />
                         <span style={{fontSize:11,color:T.textMuted,whiteSpace:'nowrap'}}>
                           {sndList.length} shown · {selSend.size} selected
                         </span>

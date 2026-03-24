@@ -113,7 +113,7 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
       // Stop if we got fewer than 100 (last page) or if no pagination
       if (arr.length < 100) break;
       page++;
-      if (page > 20) break; // safety cap at 2000 senders
+      if (page > 30) break; // safety cap at 3000 senders
     }
 
     // Fetch warmup data and merge
@@ -127,7 +127,7 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
         warmupAll = warmupAll.concat(wa);
         if (wa.length < 100) break;
         wp++;
-        if (wp > 20) break;
+        if (wp > 30) break;
       }
       const w = warmupAll;
       const warmupArr = Array.isArray(w) ? w : (w.data || []);
