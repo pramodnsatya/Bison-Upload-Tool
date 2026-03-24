@@ -103,14 +103,33 @@ app.get('/clients/:id/sender-emails/raw', async (req, res) => {
 
 app.get('/clients/:id/sender-emails', async (req, res) => {
   try {
-    // Fetch base sender emails
-    const base = await eb(req.params.id, '/api/sender-emails?per_page=200');
-    const senders = Array.isArray(base) ? base : (base.data || []);
+    // Fetch ALL sender emails across all pages
+    let senders = [];
+    let page = 1;
+    while (true) {
+      const base = await eb(req.params.id, `/api/sender-emails?per_page=100&page=${page}`);
+      const arr = Array.isArray(base) ? base : (base.data || []);
+      senders = senders.concat(arr);
+      // Stop if we got fewer than 100 (last page) or if no pagination
+      if (arr.length < 100) break;
+      page++;
+      if (page > 20) break; // safety cap at 2000 senders
+    }
 
     // Fetch warmup data and merge
     let warmupMap = {};
     try {
-      const w = await eb(req.params.id, '/api/warmup/sender-emails?per_page=200');
+      let warmupAll = [];
+      let wp = 1;
+      while (true) {
+        const w = await eb(req.params.id, `/api/warmup/sender-emails?per_page=100&page=${wp}`);
+        const wa = Array.isArray(w) ? w : (w.data || []);
+        warmupAll = warmupAll.concat(wa);
+        if (wa.length < 100) break;
+        wp++;
+        if (wp > 20) break;
+      }
+      const w = warmupAll;
       const warmupArr = Array.isArray(w) ? w : (w.data || []);
       warmupArr.forEach(ws => { warmupMap[ws.sender_email_id ?? ws.id] = ws; });
     } catch (_) {}

@@ -1272,6 +1272,7 @@ function DraftsTab({ clientId, clients, allSenders }) {
   const [draftSteps, setDraftSteps] = useState({});
   const [draftSenders, setDraftSenders] = useState({});
   const [senderPages, setSenderPages] = useState({}); // per draft current page
+  const [senderFilters2, setSenderFilters2] = useState({}); // per draft: {provider:'all', search:''}
   const [templates, setTemplates] = useState([]);
   const [selClient, setSelClient] = useState(clientId || '');
   const [localSenders, setLocalSenders] = useState([]);
@@ -1632,13 +1633,19 @@ function DraftsTab({ clientId, clients, allSenders }) {
                         ?draft.sender_count+' currently assigned'
                         :'None assigned yet'}
                     </span>
-                    <span style={{marginLeft:'auto',fontSize:12,color:T.textMuted}}>
-                      {selSend.size} selected
-                    </span>
+
                   </div>
 
                   {(()=>{
-                    const sndList=(allSenders&&allSenders.length>0)?allSenders:localSenders;
+                    const rawList=(allSenders&&allSenders.length>0)?allSenders:localSenders;
+                    const sf=senderFilters2[draft.id]||{provider:'all',search:''};
+                    const setSf=f=>setSenderFilters2(p=>({...p,[draft.id]:{...sf,...f}}));
+                    // Apply provider + search filter
+                    const sndList=rawList.filter(s=>{
+                      if(sf.provider==='google') return s.provider==='google'||s.provider==='other';
+                      if(sf.provider==='outlook') return s.provider==='outlook'||s.provider==='other';
+                      return true;
+                    }).filter(s=>!sf.search||s.email.toLowerCase().includes(sf.search.toLowerCase()));
                     const PAGE_SIZE=10;
                     const page=senderPages[draft.id]||0;
                     const totalPages=Math.ceil(sndList.length/PAGE_SIZE);
@@ -1646,9 +1653,29 @@ function DraftsTab({ clientId, clients, allSenders }) {
                     const pageAllChecked=pageSenders.length>0&&pageSenders.every(s=>selSend.has(s.id));
 
                     if(sendersLoading) return <div style={{fontSize:12,color:T.textMuted,padding:'8px 0'}}>Loading senders...</div>;
-                    if(!sndList.length) return <div style={{fontSize:12,color:T.textMuted,padding:'8px 0'}}>No senders found for this client.</div>;
+                    if(!rawList.length) return <div style={{fontSize:12,color:T.textMuted,padding:'8px 0'}}>No senders found for this client.</div>;
 
                     return (
+                      <>
+                      <div style={{display:'flex',gap:6,marginBottom:8,alignItems:'center',flexWrap:'wrap'}}>
+                        {[['all','All',rawList.length],['google','Google',rawList.filter(s=>s.provider==='google'||s.provider==='other').length],['outlook','Outlook',rawList.filter(s=>s.provider==='outlook'||s.provider==='other').length]].map(([v,l,cnt])=>(
+                          <button key={v} onClick={()=>{setSf({provider:v});setSenderPages(p=>({...p,[draft.id]:0}));}}
+                            style={{padding:'4px 10px',borderRadius:7,fontSize:11,fontFamily:'inherit',cursor:'pointer',fontWeight:sf.provider===v?600:400,
+                              border:'1.5px solid '+(sf.provider===v?T.indigo:T.border),
+                              background:sf.provider===v?T.indigoLight:T.surface,
+                              color:sf.provider===v?T.indigo:T.textSub}}>
+                            {l} ({cnt})
+                          </button>
+                        ))}
+                        <input placeholder="Search email..." value={sf.search}
+                          onChange={e=>{setSf({search:e.target.value});setSenderPages(p=>({...p,[draft.id]:0}));}}
+                          style={{padding:'4px 10px',border:'1.5px solid '+T.border,borderRadius:7,fontSize:11,
+                            fontFamily:'inherit',outline:'none',background:T.surface,minWidth:150,flex:1}} />
+                        <span style={{fontSize:11,color:T.textMuted,whiteSpace:'nowrap'}}>
+                          {sndList.length} shown · {selSend.size} selected
+                        </span>
+                      </div>
+
                       <div style={{border:'1px solid '+T.border,borderRadius:8,overflow:'hidden',background:T.surface}}>
                         {/* Select all header */}
                         <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',
@@ -1672,7 +1699,7 @@ function DraftsTab({ clientId, clients, allSenders }) {
                             </span>
                           </div>
                           <span style={{marginLeft:'auto',fontSize:11,color:T.textMuted}}>
-                            {page*PAGE_SIZE+1}–{Math.min((page+1)*PAGE_SIZE,sndList.length)} of {sndList.length}
+                            {sndList.length>0?page*PAGE_SIZE+1:0}–{Math.min((page+1)*PAGE_SIZE,sndList.length)} of {sndList.length}{sf.provider!=='all'||sf.search?' (filtered)':''}
                           </span>
                         </div>
 
@@ -1748,6 +1775,7 @@ function DraftsTab({ clientId, clients, allSenders }) {
                           </div>
                         )}
                       </div>
+                      </>
                     );
                   })()}
 
