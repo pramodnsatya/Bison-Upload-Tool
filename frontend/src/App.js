@@ -1705,7 +1705,7 @@ function DraftsTab({ clientId, clients, allSenders }) {
                   <tbody>
                     {pageSenders.map(s=>{
                       const checked=selSend.has(s.id);
-                      const isOk=(s.status||'').toLowerCase().includes('connect')||(s.status||'').toLowerCase()==='active';
+                      const isOk=((s.status||'').toLowerCase()==='connected'||(s.status||'').toLowerCase()==='active')&&!(s.status||'').toLowerCase().includes('not');
                       const sc=s.warmup_score;
                       const scColor=sc==null?T.textMuted:sc>=80?T.success:sc>=50?T.warning:T.error;
                       const campCount=s.active_campaign_count||0;
