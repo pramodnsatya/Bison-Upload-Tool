@@ -147,23 +147,33 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
       const listRes = await eb(req.params.id, '/api/campaigns?per_page=20&sort=created_at&order=desc');
       const campList = Array.isArray(listRes) ? listRes : (listRes.data || []);
 
-      // Step 2: fetch sender emails per campaign via dedicated endpoint
-      // Campaign detail doesn't include sender IDs — use per-campaign sender-emails endpoint
+      // Step 2: fetch all sender emails per campaign (paginated, same 15/page structure)
       await Promise.all(
         campList.map(async camp => {
           const st = (camp.status || '').toLowerCase();
           const isActive = st === 'active' || st === 'running' || st === 'sending' || st === 'launched';
           try {
-            const sndRes = await eb(req.params.id, `/api/campaigns/${camp.id}/sender-emails`);
-            const snds = Array.isArray(sndRes) ? sndRes : (sndRes.data || []);
-            snds.forEach(s => {
-              const sid = String(s.id ?? s);
+            // Fetch first page to get last_page
+            const first = await eb(req.params.id, `/api/campaigns/${camp.id}/sender-emails?page=1`);
+            const firstData = first.data || [];
+            const lastPage = first.meta?.last_page || 1;
+
+            // Fetch remaining pages in parallel
+            let allSnds = [...firstData];
+            if (lastPage > 1) {
+              const pages = Array.from({length: lastPage - 1}, (_, i) => i + 2);
+              const results = await Promise.all(
+                pages.map(p => eb(req.params.id, `/api/campaigns/${camp.id}/sender-emails?page=${p}`).catch(() => ({data:[]})))
+              );
+              results.forEach(r => { allSnds = allSnds.concat(r.data || []); });
+            }
+
+            allSnds.forEach(s => {
+              const sid = String(s.id);
               senderCampaignCount[sid] = (senderCampaignCount[sid] || 0) + 1;
               if (isActive) activeCampaignSenders.add(sid);
             });
-          } catch(_) {
-            // Endpoint not found — skip, count stays 0 for this campaign
-          }
+          } catch(_) {}
         })
       );
 
