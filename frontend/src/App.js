@@ -1169,9 +1169,9 @@ export default function App() {
                                   <td style={{color:T.textSub}}>{s.emails_sent!=null ? s.emails_sent.toLocaleString() : '—'}</td>
                                   <td>
                                     <span style={{fontSize:11,fontWeight:600,padding:'2px 8px',borderRadius:999,
-                                      background:s.bounce_protection?'#DCFCE7':'#F3F4F6',
-                                      color:s.bounce_protection?'#15803D':'#9CA3AF'}}>
-                                      {s.bounce_protection?'✓ On':'—'}
+                                      background:s.bounce_protection?'#FEF2F2':'#F3F4F6',
+                                      color:s.bounce_protection?'#DC2626':'#9CA3AF'}}>
+                                      {s.bounce_protection?'✓':'—'}
                                     </span>
                                   </td>
                                   <td>
@@ -1708,7 +1708,7 @@ function DraftsTab({ clientId, clients, allSenders }) {
                           <td style={{padding:'8px 8px',textAlign:'right',fontSize:12,color:T.textSub}}>{s.emails_sent!=null?Number(s.emails_sent).toLocaleString():'—'}</td>
                           <td style={{padding:'8px 8px',textAlign:'center'}}>
                             {s.bounce_protection
-                              ?<span style={{fontSize:11,fontWeight:600,color:'#15803D',background:'#DCFCE7',padding:'2px 7px',borderRadius:999}}>✓</span>
+                              ?<span style={{fontSize:11,fontWeight:600,color:'#DC2626',background:'#FEF2F2',padding:'2px 7px',borderRadius:999}}>✓</span>
                               :<span style={{fontSize:11,color:T.textMuted}}>—</span>
                             }
                           </td>
