@@ -305,38 +305,6 @@ function MappingDialog({ columns, onConfirm, onCancel }) {
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
-// ─── Inline template picker for deploy copy step ─────────────────────────────
-function TemplateInlinePicker({ onSelect }) {
-  const [templates, setTemplates] = useState([]);
-  const [loaded, setLoaded] = useState(false);
-  if (!loaded) return (
-    <button onClick={()=>{ setLoaded(true); api('/templates').then(setTemplates).catch(()=>{}); }}
-      style={{padding:'5px 12px',border:'1.5px solid #E5E0D8',borderRadius:7,fontSize:12,
-        fontFamily:'inherit',background:'#fff',cursor:'pointer',color:'#6B7280'}}>
-      📋 Saved templates
-    </button>
-  );
-  if (!templates.length) return <span style={{fontSize:12,color:'#9CA3AF'}}>No saved templates</span>;
-  return (
-    <select defaultValue=""
-      onChange={e=>{
-        const t=templates.find(x=>x.id===e.target.value);
-        if(!t) return;
-        const steps=(t.steps||[]).map(s=>({
-          subject:s.subject||s.email_subject||'',
-          body:stripHtml(s.body||s.email_body||''),
-          delay_days:Math.max(1,s.delay_days||1),
-        }));
-        if(steps.length) onSelect(steps);
-        e.target.value='';
-      }}
-      style={{padding:'5px 12px',border:'1.5px solid #E5E0D8',borderRadius:7,fontSize:12,
-        fontFamily:'inherit',background:'#fff',cursor:'pointer',outline:'none'}}>
-      <option value="" disabled>📋 Use saved template...</option>
-      {templates.map(t=><option key={t.id} value={t.id}>{t.name} ({t.steps?.length||0} emails)</option>)}
-    </select>
-  );
-}
 
 // ─── Inline campaign sequence picker ─────────────────────────────────────────
 function CampaignSequencePicker({ clientId, onSelect }) {
@@ -644,7 +612,7 @@ export default function App() {
             </div>
             {/* Tab nav */}
             <div style={{ display:'flex', gap:4 }}>
-              {[['deploy','🚀 Deploy'],['drafts','✏️ Manage Drafts'],['templates','📋 Templates']].map(([id,label])=>(
+              {[['deploy','🚀 Deploy'],['drafts','✏️ Manage Drafts']].map(([id,label])=>(
                 <button key={id} onClick={()=>setActiveTab(id)}
                   style={{ padding:'6px 14px', borderRadius:8, border:'none', cursor:'pointer', fontFamily:'inherit',
                     fontSize:13, fontWeight:activeTab===id?600:400, transition:'all .15s',
@@ -671,17 +639,7 @@ export default function App() {
           try { return <DraftsTab clientId={clientId} clients={clients} allSenders={allSenders} />; }
           catch(e) { return <div style={{padding:20,color:'red'}}>DraftsTab error: {e.message}</div>; }
         })()}
-        {activeTab==='templates' && <TemplatesTab clientId={clientId} clients={clients} onUseTemplate={tpl => {
-          // Strip HTML from bodies, populate emailSteps, switch to deploy/copy
-          const steps = tpl.steps.map(s => ({
-            subject:    s.subject || s.email_subject || '',
-            body:       stripHtml(s.body || s.email_body || ''),
-            delay_days: Math.max(1, s.delay_days ?? s.wait_in_days ?? 1),
-          }));
-          setEmailSteps(steps);
-          setActiveTab('deploy');
-          setStep(6); // go straight to copy step with it pre-filled
-        }} />}
+
 
         {/* ── DEPLOY TAB ─────────────────────────────────────────────────── */}
         {activeTab==='deploy' && <>
@@ -1369,7 +1327,7 @@ function DraftsTab({ clientId, clients, allSenders }) {
   const [loadingDrafts, setLoadingDrafts] = useState(false);
   const [localSenders, setLocalSenders] = useState([]);
   const [sendersLoading, setSendersLoading] = useState(false);
-  const [templates, setTemplates] = useState([]);
+
   const [selClient, setSelClient] = useState(clientId || '');
   const [selDraftId, setSelDraftId] = useState('');
   const [err, setErr] = useState('');
@@ -1381,10 +1339,6 @@ function DraftsTab({ clientId, clients, allSenders }) {
   const [senderFilter, setSenderFilter] = useState({provider:'all', search:''});
   const [applying, setApplying] = useState({});
   const [actionDone, setActionDone] = useState({});
-
-  useEffect(() => {
-    api('/templates').then(setTemplates).catch(() => {});
-  }, []);
 
   useEffect(() => {
     if (!selClient) return;
@@ -1885,331 +1839,3 @@ function DraftsTab({ clientId, clients, allSenders }) {
   );
 }
 
-
-function TemplatesTab({ clientId, clients, onUseTemplate }) {
-  const [templates,    setTemplates]    = useState([]);
-  const [tab,          setTab]          = useState('saved'); // 'saved' | 'pull'
-  const [loading,      setLoading]      = useState(false);
-  const [error,        setError]        = useState('');
-  const [success,      setSuccess]      = useState('');
-
-  // Pull-from-campaign state
-  const [pullClientId, setPullClientId] = useState(clientId || '');
-  const [campaigns,    setCampaigns]    = useState([]);
-  const [loadingCamps, setLoadingCamps] = useState(false);
-  const [selectedCamp, setSelectedCamp] = useState(null);
-  const [fetchedSteps, setFetchedSteps] = useState(null);
-  const [templateName, setTemplateName] = useState('');
-
-  // Manual template state
-  const [manualName,   setManualName]   = useState('');
-  const [manualSteps,  setManualSteps]  = useState([
-    { subject:'', body:'', delay_days:0, is_reply:false },
-  ]);
-  const [showManual,   setShowManual]   = useState(false);
-
-  useEffect(()=>{ loadTemplates(); }, []);
-  useEffect(()=>{
-    if(clientId) { setPullClientId(clientId); loadAllCampaigns(clientId); }
-  }, [clientId]);
-
-  async function loadTemplates() {
-    try { const d = await api('/templates'); setTemplates(d); } catch(_) {}
-  }
-
-  async function loadAllCampaigns(cid) {
-    if (!cid) { setCampaigns([]); setSelectedCamp(null); setFetchedSteps(null); return; }
-    setLoadingCamps(true); setError('');
-    try {
-      // Fetch up to 200 campaigns — paginate if needed
-      const d = await api(`/clients/${cid}/campaigns/search?q=&per_page=200`);
-      setCampaigns(d);
-      setSelectedCamp(null); setFetchedSteps(null);
-    } catch(e) { setError(e.message); }
-    finally { setLoadingCamps(false); }
-  }
-
-  async function fetchSteps(camp) {
-    setSelectedCamp(camp);
-    setFetchedSteps(null); setTemplateName(camp.name);
-    setLoading(true); setError('');
-    try {
-      const steps = await api(`/clients/${pullClientId}/campaigns/${camp.id}/sequence`);
-      if (!steps.length) { setError('No sequence steps found in this campaign.'); setLoading(false); return; }
-      setFetchedSteps(steps);
-    } catch(e) { setError(e.message); }
-    finally { setLoading(false); }
-  }
-
-  async function saveFromCampaign() {
-    if (!templateName.trim() || !fetchedSteps) return;
-    setLoading(true); setError('');
-    try {
-      await api('/templates', { method:'POST', body:JSON.stringify({
-        name: templateName.trim(),
-        clientId: pullClientId,
-        sourceCampaignId: selectedCamp.id,
-        sourceCampaignName: selectedCamp.name,
-        steps: fetchedSteps,
-      })});
-      setSuccess(`Template "${templateName}" saved!`);
-      setFetchedSteps(null); setSelectedCamp(null); setTemplateName(''); setCampaigns([]);
-      loadTemplates();
-    } catch(e) { setError(e.message); }
-    finally { setLoading(false); }
-  }
-
-  async function saveManual() {
-    if (!manualName.trim()) { setError('Enter a template name'); return; }
-    const validSteps = manualSteps.filter(s => s.subject || s.body);
-    if (!validSteps.length) { setError('At least one email step is required'); return; }
-    setLoading(true); setError('');
-    try {
-      await api('/templates', { method:'POST', body:JSON.stringify({
-        name: manualName.trim(), steps: manualSteps,
-      })});
-      setSuccess(`Template "${manualName}" saved!`);
-      setManualName(''); setManualSteps([{subject:'',body:'',delay_days:0,is_reply:false}]);
-      setShowManual(false); loadTemplates();
-    } catch(e) { setError(e.message); }
-    finally { setLoading(false); }
-  }
-
-  async function deleteTemplate(id, name) {
-    if (!window.confirm(`Delete template "${name}"?`)) return;
-    try { await api(`/templates/${id}`, { method:'DELETE' }); loadTemplates(); } catch(e) { setError(e.message); }
-  }
-
-  const T2 = {
-    ...{ border:'#E5E7EB', surface:'#FFFFFF', bg:'#F9FAFB', text:'#111827',
-         textSub:'#6B7280', textMuted:'#9CA3AF', indigo:'#6366F1', indigoLight:'#EEF2FF',
-         success:'#10B981', warning:'#F59E0B', error:'#EF4444', surfaceAlt:'#F3F4F6' }
-  };
-
-  return (
-    <div>
-      <div style={{ marginBottom:24 }}>
-        <h2 style={{ fontSize:22, fontWeight:700, marginBottom:4 }}>Email Copy Templates</h2>
-        <p style={{ fontSize:14, color:T2.textSub }}>
-          Save email sequences as reusable templates. Pull from any existing EmailBison campaign or create manually.
-        </p>
-      </div>
-
-      {error && <div style={{ background:'#FEF2F2', border:'1px solid #FECACA', borderRadius:10, padding:'10px 14px', fontSize:13, color:'#991B1B', marginBottom:12, display:'flex', gap:8 }}><span>✕</span>{error}</div>}
-      {success && <div style={{ background:'#F0FDF4', border:'1px solid #BBF7D0', borderRadius:10, padding:'10px 14px', fontSize:13, color:'#166534', marginBottom:12, display:'flex', gap:8, alignItems:'center' }}><span>✓</span>{success}<button onClick={()=>setSuccess('')} style={{marginLeft:'auto',background:'none',border:'none',cursor:'pointer',color:'#166534',fontSize:16}}>×</button></div>}
-
-      {/* Sub-tabs */}
-      <div style={{ display:'flex', gap:8, marginBottom:24, borderBottom:`1px solid ${T2.border}`, paddingBottom:0 }}>
-        {[['saved','📁 Saved Templates'],['pull','🔗 Pull from Campaign'],['manual','✏️ Create Manually']].map(([id,label])=>(
-          <button key={id} onClick={()=>setTab(id)}
-            style={{ padding:'8px 16px', border:'none', cursor:'pointer', fontFamily:'inherit', fontSize:13,
-              fontWeight:tab===id?600:400, background:'none', borderBottom:tab===id?`2px solid ${T2.indigo}`:'2px solid transparent',
-              color:tab===id?T2.indigo:T2.textSub, marginBottom:-1, transition:'all .15s' }}>
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {/* ── Saved Templates ───────────────────────────────────────────────── */}
-      {tab==='saved' && (
-        <div>
-          {templates.length === 0
-            ? (
-              <div style={{ textAlign:'center', padding:'48px 24px', border:`2px dashed ${T2.border}`, borderRadius:12 }}>
-                <div style={{ fontSize:32, marginBottom:12 }}>📋</div>
-                <div style={{ fontWeight:600, color:T2.text, marginBottom:6 }}>No templates saved yet</div>
-                <div style={{ fontSize:13, color:T2.textSub }}>Pull from an existing campaign or create one manually.</div>
-              </div>
-            )
-            : (
-              <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
-                {templates.map(tpl=>(
-                  <div key={tpl.id} style={{ background:T2.surface, border:`1px solid ${T2.border}`, borderRadius:12, overflow:'hidden' }}>
-                    <div style={{ padding:'16px 20px', display:'flex', alignItems:'flex-start', gap:12 }}>
-                      <div style={{ flex:1 }}>
-                        <div style={{ fontWeight:700, fontSize:15, marginBottom:4 }}>{tpl.name}</div>
-                        <div style={{ fontSize:12, color:T2.textMuted, display:'flex', gap:12, flexWrap:'wrap' }}>
-                          {tpl.sourceCampaignName && <span>From: {tpl.sourceCampaignName}</span>}
-                          <span>{tpl.steps.length} email{tpl.steps.length>1?'s':''}</span>
-                          <span>Saved {new Date(tpl.createdAt).toLocaleDateString()}</span>
-                        </div>
-                      </div>
-                      <div style={{ display:'flex', gap:8, flexShrink:0 }}>
-                        {onUseTemplate && (
-                          <button onClick={()=>onUseTemplate(tpl)}
-                            style={{ background:T2.indigo, border:'none', borderRadius:8, padding:'6px 14px',
-                              cursor:'pointer', fontSize:12, color:'#fff', fontFamily:'inherit', fontWeight:600 }}>
-                            Use Template →
-                          </button>
-                        )}
-                        <button onClick={()=>deleteTemplate(tpl.id, tpl.name)}
-                          style={{ background:'none', border:`1px solid ${T2.border}`, borderRadius:8, padding:'5px 10px',
-                            cursor:'pointer', fontSize:12, color:T2.textMuted, fontFamily:'inherit' }}>
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                    {/* Step preview */}
-                    <div style={{ borderTop:`1px solid ${T2.border}`, background:T2.bg }}>
-                      {tpl.steps.map((s,i)=>(
-                        <div key={i} style={{ padding:'10px 20px', borderBottom: i<tpl.steps.length-1?`1px solid ${T2.border}`:'none', display:'grid', gridTemplateColumns:'auto 1fr', gap:'0 12px' }}>
-                          <div style={{ width:22, height:22, borderRadius:'50%', background:i===0?T2.indigo:'#E5E7EB', color:i===0?'#fff':T2.textSub, display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:700, flexShrink:0, marginTop:1 }}>{i+1}</div>
-                          <div>
-                            <div style={{ fontSize:13, fontWeight:600, color:T2.text }}>{s.subject || '(no subject)'}</div>
-                            <div style={{ fontSize:12, color:T2.textMuted, marginTop:2, display:'flex', gap:10 }}>
-                              {i>0 && <span>Day {s.delay_days} · Reply in thread</span>}
-                              <span>{(()=>{ const t=stripHtml(s.body||''); const w=t.split(/\s+/); return w.slice(0,8).join(' ')+(w.length>8?'…':''); })()}</span>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )
-          }
-        </div>
-      )}
-
-      {/* ── Pull from Campaign ────────────────────────────────────────────── */}
-      {tab==='pull' && (
-        <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
-          <div style={{ background:T2.surface, border:`1px solid ${T2.border}`, borderRadius:12, padding:24 }}>
-            <h3 style={{ fontSize:15, fontWeight:700, marginBottom:16 }}>Pull sequence steps from an existing campaign</h3>
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
-              {/* Client dropdown */}
-              <div>
-                <label style={{ fontSize:12, fontWeight:600, color:T2.textSub, display:'block', marginBottom:6 }}>Client</label>
-                <select value={pullClientId}
-                  onChange={e=>{ setPullClientId(e.target.value); loadAllCampaigns(e.target.value); }}
-                  style={{ width:'100%', padding:'9px 12px', border:`1.5px solid ${T2.border}`, borderRadius:9, fontSize:13, fontFamily:'inherit', background:T2.surface, outline:'none', cursor:'pointer' }}>
-                  <option value="">Select client...</option>
-                  {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-              </div>
-
-              {/* Campaign dropdown */}
-              <div>
-                <label style={{ fontSize:12, fontWeight:600, color:T2.textSub, display:'block', marginBottom:6 }}>
-                  Campaign
-                  {loadingCamps && <span style={{ marginLeft:8, fontSize:11, color:T2.indigo }}>Loading...</span>}
-                </label>
-                <select
-                  value={selectedCamp?.id || ''}
-                  disabled={!pullClientId || loadingCamps || campaigns.length===0}
-                  onChange={e=>{
-                    const camp = campaigns.find(c=>String(c.id)===e.target.value);
-                    if(camp) fetchSteps(camp);
-                  }}
-                  style={{ width:'100%', padding:'9px 12px', border:`1.5px solid ${selectedCamp?T2.indigo:T2.border}`,
-                    borderRadius:9, fontSize:13, fontFamily:'inherit', background:T2.surface, outline:'none',
-                    cursor:(!pullClientId||loadingCamps)?'not-allowed':'pointer', opacity:(!pullClientId||loadingCamps)?0.5:1 }}>
-                  <option value="">{campaigns.length===0 ? (pullClientId?'No campaigns found':'Select client first') : `Select campaign (${campaigns.length})...`}</option>
-                  {campaigns.map(c=><option key={c.id} value={String(c.id)}>{c.name}</option>)}
-                </select>
-              </div>
-            </div>
-
-            {selectedCamp && loading && (
-              <div style={{ marginTop:12, display:'flex', alignItems:'center', gap:8, fontSize:13, color:T2.indigo }}>
-                <span style={{ display:'inline-block', width:14, height:14, border:`2px solid ${T2.indigo}`, borderTopColor:'transparent', borderRadius:'50%', animation:'spin .7s linear infinite' }} />
-                Fetching sequence steps from "{selectedCamp.name}"...
-              </div>
-            )}
-          </div>
-
-          {fetchedSteps && (
-            <div style={{ background:T2.surface, border:`1px solid ${T2.border}`, borderRadius:12, padding:24 }}>
-              <h3 style={{ fontSize:15, fontWeight:700, marginBottom:4 }}>Sequence from "{selectedCamp.name}"</h3>
-              <p style={{ fontSize:13, color:T2.textSub, marginBottom:16 }}>{fetchedSteps.length} email steps pulled successfully.</p>
-
-              <div style={{ border:`1px solid ${T2.border}`, borderRadius:10, overflow:'hidden', marginBottom:20 }}>
-                {fetchedSteps.map((s,i)=>(
-                  <div key={i} style={{ padding:'12px 18px', borderBottom:i<fetchedSteps.length-1?`1px solid ${T2.border}`:'none', background:i%2===0?T2.bg:T2.surface }}>
-                    <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:4 }}>
-                      <div style={{ width:20, height:20, borderRadius:'50%', background:i===0?T2.indigo:'#6B7280', color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:700, flexShrink:0 }}>{i+1}</div>
-                      <span style={{ fontWeight:600, fontSize:13 }}>{s.subject || '(no subject)'}</span>
-                      {i>0 && <span style={{ fontSize:11, color:T2.textMuted, marginLeft:'auto' }}>Day {s.delay_days} · Reply</span>}
-                    </div>
-                    <div style={{ fontSize:12, color:T2.textMuted, marginLeft:30, fontFamily:'monospace', whiteSpace:'pre-wrap', maxHeight:60, overflow:'hidden' }}>
-                      {stripHtml(s.body||'').slice(0,200)}{stripHtml(s.body||'').length>200?'…':''}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div style={{ display:'flex', gap:10, alignItems:'flex-end' }}>
-                <div style={{ flex:1 }}>
-                  <label style={{ fontSize:12, fontWeight:600, color:T2.textSub, display:'block', marginBottom:6 }}>Save as template named</label>
-                  <input value={templateName} onChange={e=>setTemplateName(e.target.value)} placeholder="e.g. Epsilon3 — Insurance ICP v2"
-                    style={{ width:'100%', padding:'9px 12px', border:`1.5px solid ${T2.border}`, borderRadius:9, fontSize:13, fontFamily:'inherit', outline:'none', background:T2.surface }} />
-                </div>
-                <button onClick={saveFromCampaign} disabled={loading||!templateName.trim()}
-                  style={{ padding:'9px 20px', background:T2.success, color:'#fff', border:'none', borderRadius:9, cursor:'pointer', fontFamily:'inherit', fontWeight:600, fontSize:13, opacity:!templateName.trim()?0.5:1, whiteSpace:'nowrap' }}>
-                  {loading ? 'Saving...' : '💾 Save Template'}
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── Create Manually ───────────────────────────────────────────────── */}
-      {tab==='manual' && (
-        <div style={{ background:T2.surface, border:`1px solid ${T2.border}`, borderRadius:12, padding:24 }}>
-          <h3 style={{ fontSize:15, fontWeight:700, marginBottom:16 }}>Create a template manually</h3>
-
-          <div style={{ marginBottom:20 }}>
-            <label style={{ fontSize:12, fontWeight:600, color:T2.textSub, display:'block', marginBottom:6 }}>Template Name</label>
-            <input value={manualName} onChange={e=>setManualName(e.target.value)} placeholder="e.g. Soona — Ecommerce Outreach v1"
-              style={{ width:'100%', maxWidth:420, padding:'9px 12px', border:`1.5px solid ${T2.border}`, borderRadius:9, fontSize:13, fontFamily:'inherit', outline:'none', background:T2.surface }} />
-          </div>
-
-          <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
-            {manualSteps.map((s,i)=>(
-              <div key={i} style={{ border:`1.5px solid ${i===0?T2.border:'#D1FAE5'}`, borderRadius:12, overflow:'hidden' }}>
-                <div style={{ padding:'10px 16px', background:i===0?T2.bg:'#ECFDF5', borderBottom:`1px solid ${i===0?T2.border:'#A7F3D0'}`, display:'flex', alignItems:'center', gap:10 }}>
-                  <div style={{ width:22, height:22, borderRadius:'50%', background:i===0?T2.indigo:T2.success, color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:700 }}>{i+1}</div>
-                  <span style={{ fontWeight:600, fontSize:13 }}>{i===0?'Email 1 — Initial outreach':`Follow-up ${i} — Reply in thread`}</span>
-                  {i>0 && (
-                    <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:8 }}>
-                      <span style={{ fontSize:12, color:T2.textSub }}>Send on day</span>
-                      <input type="number" min={1} max={30} value={s.delay_days}
-                        onChange={e=>setManualSteps(prev=>prev.map((x,j)=>j===i?{...x,delay_days:parseInt(e.target.value)||1}:x))}
-                        style={{ width:50, padding:'4px 8px', border:`1.5px solid ${T2.border}`, borderRadius:8, fontSize:12, textAlign:'center', fontFamily:'inherit', outline:'none' }} />
-                      <button onClick={()=>setManualSteps(prev=>prev.filter((_,j)=>j!==i))}
-                        style={{ background:'none', border:'none', cursor:'pointer', color:T2.textMuted, fontSize:16, padding:'0 4px' }}>✕</button>
-                    </div>
-                  )}
-                </div>
-                <div style={{ padding:'12px 16px 14px', display:'flex', flexDirection:'column', gap:10 }}>
-                  <input value={s.subject} onChange={e=>setManualSteps(prev=>prev.map((x,j)=>j===i?{...x,subject:e.target.value}:x))}
-                    placeholder={i===0?'Subject line':'Re: [original subject]'}
-                    style={{ width:'100%', padding:'8px 12px', border:`1.5px solid ${T2.border}`, borderRadius:8, fontSize:13, fontFamily:'inherit', outline:'none', background:T2.surface }} />
-                  <textarea rows={18} value={s.body} onChange={e=>setManualSteps(prev=>prev.map((x,j)=>j===i?{...x,body:e.target.value}:x))}
-                    placeholder={i===0?'Hi {first_name},\n\n[email body]\n\nBest,\n[Your name]':'[follow-up body]'}
-                    style={{ width:'100%', padding:'8px 12px', border:`1.5px solid ${T2.border}`, borderRadius:8, fontSize:12, fontFamily:'monospace', outline:'none', resize:'vertical', lineHeight:1.7, background:T2.surface }} />
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {manualSteps.length < 5 && (
-            <button onClick={()=>setManualSteps(prev=>[...prev,{subject:'',body:'',delay_days:prev.length*3,is_reply:true}])}
-              style={{ marginTop:12, width:'100%', padding:'10px', border:`2px dashed ${T2.border}`, borderRadius:10, background:'transparent', cursor:'pointer', fontSize:13, color:T2.textSub, fontFamily:'inherit' }}>
-              + Add follow-up email
-            </button>
-          )}
-
-          <div style={{ marginTop:20, display:'flex', gap:10 }}>
-            <button onClick={saveManual} disabled={loading||!manualName.trim()}
-              style={{ padding:'10px 22px', background:T2.indigo, color:'#fff', border:'none', borderRadius:9, cursor:'pointer', fontFamily:'inherit', fontWeight:600, fontSize:13, opacity:!manualName.trim()?0.5:1 }}>
-              {loading ? 'Saving...' : '💾 Save Template'}
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}

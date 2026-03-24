@@ -424,42 +424,6 @@ app.post('/clients/:id/campaigns/:cid/senders', async (req, res) => {
 });
 
 
-// ── Template library ─────────────────────────────────────────────────────────
-const TEMPLATES_FILE = join(__dirname, 'templates.json');
-
-function loadTemplates() {
-  try { return JSON.parse(readFileSync(TEMPLATES_FILE, 'utf8')); } catch { return []; }
-}
-function saveTemplates(t) {
-  writeFileSync(TEMPLATES_FILE, JSON.stringify(t, null, 2));
-}
-
-// List all saved templates
-app.get('/templates', (_req, res) => res.json(loadTemplates()));
-
-// Save a new template
-app.post('/templates', (req, res) => {
-  try {
-    const { name, clientId, sourceCampaignId, sourceCampaignName, steps } = req.body;
-    if (!name || !steps?.length) return res.status(400).json({ error: 'name and steps required' });
-    const templates = loadTemplates();
-    const id = `tpl_${Date.now()}`;
-    const tpl = { id, name, clientId, sourceCampaignId, sourceCampaignName, steps, createdAt: new Date().toISOString() };
-    templates.push(tpl);
-    saveTemplates(templates);
-    res.json(tpl);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Delete a template
-app.delete('/templates/:id', (req, res) => {
-  try {
-    const templates = loadTemplates().filter(t => t.id !== req.params.id);
-    saveTemplates(templates);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
 // Fetch sequence steps from an existing EmailBison campaign
 // Try both URL patterns — support docs use /{id}/sequence-steps, public docs use ?campaign_id=
 app.get('/clients/:id/campaigns/:cid/sequence', async (req, res) => {
