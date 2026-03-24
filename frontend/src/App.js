@@ -1152,7 +1152,6 @@ export default function App() {
                           const sc = s.warmup_score;
                           const scColor = sc==null?T.textMuted:sc>=80?T.success:sc>=50?T.warning:T.error;
                           const campCount = s.active_campaign_count || 0;
-                          const isRec = idx < needed;
                           return (
                             <tr key={s.id} onClick={()=>toggle(s.id)}
                               style={{ cursor:'pointer', background:checked?T.indigoLight:'transparent',
@@ -1167,7 +1166,6 @@ export default function App() {
                               </td>
                               <td style={{ padding:'8px 12px', fontSize:12 }}>
                                 {s.email}
-                                {isRec && <span style={{marginLeft:6,fontSize:10,color:T.success,fontWeight:700}}>★</span>}
                               </td>
                               <td style={{ padding:'8px 8px', textAlign:'right', fontWeight:600, fontSize:12, color:scColor }}>{sc??'—'}</td>
                               <td style={{ padding:'8px 8px', textAlign:'right', fontSize:12, color:T.textSub }}>{s.warmup_sent!=null?Number(s.warmup_sent).toLocaleString():'—'}</td>
