@@ -1271,6 +1271,7 @@ function DraftsTab({ clientId, clients, allSenders }) {
   const [actionDone, setActionDone] = useState({});
   const [draftSteps, setDraftSteps] = useState({});
   const [draftSenders, setDraftSenders] = useState({});
+  const [senderPages, setSenderPages] = useState({}); // per draft current page
   const [templates, setTemplates] = useState([]);
   const [selClient, setSelClient] = useState(clientId || '');
   const [localSenders, setLocalSenders] = useState([]);
@@ -1491,20 +1492,53 @@ function DraftsTab({ clientId, clients, allSenders }) {
                         ?'Already has '+draft.sequence_count+' steps — will replace'
                         :'Not configured'}
                     </span>
-                    {templates.length>0 && (
-                      <select defaultValue=""
-                        onChange={e=>{
-                          const t=templates.find(x=>x.id===e.target.value);
-                          if(t) loadTemplate(draft.id,t);
-                          e.target.value='';
-                        }}
-                        style={{marginLeft:'auto',padding:'5px 10px',border:'1.5px solid '+T.border,
-                          borderRadius:7,fontSize:12,fontFamily:'inherit',
-                          background:T.surface,outline:'none',cursor:'pointer'}}>
-                        <option value="" disabled>Load template...</option>
-                        {templates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
-                      </select>
-                    )}
+                    <div style={{marginLeft:'auto',display:'flex',gap:6}}>
+                      {/* Load from saved template */}
+                      {templates.length>0 && (
+                        <select defaultValue=""
+                          onChange={e=>{
+                            const t=templates.find(x=>x.id===e.target.value);
+                            if(t) loadTemplate(draft.id,t);
+                            e.target.value='';
+                          }}
+                          style={{padding:'5px 10px',border:'1.5px solid '+T.border,
+                            borderRadius:7,fontSize:12,fontFamily:'inherit',
+                            background:T.surface,outline:'none',cursor:'pointer'}}>
+                          <option value="" disabled>Saved template...</option>
+                          {templates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+                        </select>
+                      )}
+                      {/* Pull from existing campaign */}
+                      {selClient && (
+                        <select defaultValue=""
+                          onChange={async e=>{
+                            const campId=e.target.value; e.target.value='';
+                            if(!campId) return;
+                            try {
+                              const steps=await api('/clients/'+selClient+'/campaigns/'+campId+'/sequence');
+                              if(steps.length) loadTemplate(draft.id,{steps});
+                            } catch(_){}
+                          }}
+                          onFocus={async e=>{
+                            if(e.target.options.length<=1) {
+                              try {
+                                const camps=await api('/clients/'+selClient+'/campaigns/search');
+                                Array.from(e.target.options).slice(1).forEach(o=>o.remove());
+                                camps.slice(0,50).forEach(camp=>{
+                                  const o=document.createElement('option');
+                                  o.value=camp.id; o.text=camp.name;
+                                  e.target.appendChild(o);
+                                });
+                              } catch(_){}
+                            }
+                          }}
+                          style={{padding:'5px 10px',border:'1.5px solid '+T.border,
+                            borderRadius:7,fontSize:12,fontFamily:'inherit',
+                            background:T.surface,outline:'none',cursor:'pointer'}}>
+                          <option value="" disabled>Pull from campaign...</option>
+                        </select>
+                      )}
+                    </div>
                   </div>
 
                   <div style={{display:'flex',flexDirection:'column',gap:10}}>
@@ -1603,49 +1637,119 @@ function DraftsTab({ clientId, clients, allSenders }) {
                     </span>
                   </div>
 
-                  {(!(allSenders&&allSenders.length>0)&&localSenders.length===0) ? (
-                    <div style={{fontSize:12,color:T.textMuted,padding:'8px 0'}}>
-                      {sendersLoading ? 'Loading senders...' : 'No senders found for this client.'}
-                    </div>
-                  ) : (
-                    <div style={{maxHeight:220,overflowY:'auto',
-                      border:'1px solid '+T.border,borderRadius:8,background:T.surface}}>
-                      {((allSenders&&allSenders.length>0)?allSenders:localSenders).map(s=>{
-                        const checked=selSend.has(s.id);
-                        return (
-                          <div key={s.id}
-                            onClick={()=>setDraftSenders(p=>{
+                  {(()=>{
+                    const sndList=(allSenders&&allSenders.length>0)?allSenders:localSenders;
+                    const PAGE_SIZE=10;
+                    const page=senderPages[draft.id]||0;
+                    const totalPages=Math.ceil(sndList.length/PAGE_SIZE);
+                    const pageSenders=sndList.slice(page*PAGE_SIZE,(page+1)*PAGE_SIZE);
+                    const pageAllChecked=pageSenders.length>0&&pageSenders.every(s=>selSend.has(s.id));
+
+                    if(sendersLoading) return <div style={{fontSize:12,color:T.textMuted,padding:'8px 0'}}>Loading senders...</div>;
+                    if(!sndList.length) return <div style={{fontSize:12,color:T.textMuted,padding:'8px 0'}}>No senders found for this client.</div>;
+
+                    return (
+                      <div style={{border:'1px solid '+T.border,borderRadius:8,overflow:'hidden',background:T.surface}}>
+                        {/* Select all header */}
+                        <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',
+                          background:T.surfaceAlt,borderBottom:'1px solid '+T.border}}>
+                          <div onClick={()=>setDraftSenders(p=>{
                               const ns=new Set(p[draft.id]||[]);
-                              checked?ns.delete(s.id):ns.add(s.id);
+                              pageAllChecked
+                                ? pageSenders.forEach(s=>ns.delete(s.id))
+                                : pageSenders.forEach(s=>ns.add(s.id));
                               return {...p,[draft.id]:ns};
                             })}
-                            style={{display:'flex',alignItems:'center',gap:10,
-                              padding:'8px 12px',cursor:'pointer',
-                              borderBottom:'1px solid '+T.surfaceAlt,
-                              background:checked?T.indigoLight:'transparent'}}>
-                            <div style={{width:15,height:15,borderRadius:3,flexShrink:0,
-                              border:'2px solid '+(checked?T.indigo:'#D1D5DB'),
-                              background:checked?T.indigo:'transparent',
-                              display:'flex',alignItems:'center',justifyContent:'center'}}>
-                              {checked&&<span style={{color:'#fff',fontSize:8,fontWeight:700}}>✓</span>}
+                            style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}}>
+                            <div style={{width:15,height:15,borderRadius:3,
+                              border:'2px solid '+(pageAllChecked?T.indigo:'#D1D5DB'),
+                              background:pageAllChecked?T.indigo:'transparent',
+                              display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                              {pageAllChecked&&<span style={{color:'#fff',fontSize:8,fontWeight:700}}>✓</span>}
                             </div>
-                            <span style={{fontSize:12,flex:1}}>{s.email}</span>
-                            <span style={{fontSize:11,padding:'1px 6px',borderRadius:4,fontWeight:600,
-                              background:s.provider==='google'?'#EFF6FF':s.provider==='outlook'?'#FFF7ED':'#F3F4F6',
-                              color:s.provider==='google'?T.indigo:s.provider==='outlook'?'#C2410C':'#6B7280'}}>
-                              {s.provider==='google'?'Google':s.provider==='outlook'?'Outlook':'—'}
-                            </span>
-                            <span style={{fontSize:11,color:s.warmup_score>=80?T.success:T.textMuted}}>
-                              {s.warmup_score!=null?'Score: '+s.warmup_score:'—'}
-                            </span>
-                            <span style={{fontSize:11,color:s.active_campaign_count>0?T.warning:T.textMuted}}>
-                              {s.active_campaign_count>0?s.active_campaign_count+' camps':'free'}
+                            <span style={{fontSize:11,fontWeight:600,color:T.textSub}}>
+                              Select all on this page
                             </span>
                           </div>
-                        );
-                      })}
-                    </div>
-                  )}
+                          <span style={{marginLeft:'auto',fontSize:11,color:T.textMuted}}>
+                            {page*PAGE_SIZE+1}–{Math.min((page+1)*PAGE_SIZE,sndList.length)} of {sndList.length}
+                          </span>
+                        </div>
+
+                        {/* Sender rows */}
+                        {pageSenders.map(s=>{
+                          const checked=selSend.has(s.id);
+                          return (
+                            <div key={s.id}
+                              onClick={()=>setDraftSenders(p=>{
+                                const ns=new Set(p[draft.id]||[]);
+                                checked?ns.delete(s.id):ns.add(s.id);
+                                return {...p,[draft.id]:ns};
+                              })}
+                              style={{display:'flex',alignItems:'center',gap:10,
+                                padding:'8px 12px',cursor:'pointer',
+                                borderBottom:'1px solid '+T.surfaceAlt,
+                                background:checked?T.indigoLight:'transparent'}}>
+                              <div style={{width:15,height:15,borderRadius:3,flexShrink:0,
+                                border:'2px solid '+(checked?T.indigo:'#D1D5DB'),
+                                background:checked?T.indigo:'transparent',
+                                display:'flex',alignItems:'center',justifyContent:'center'}}>
+                                {checked&&<span style={{color:'#fff',fontSize:8,fontWeight:700}}>✓</span>}
+                              </div>
+                              <span style={{fontSize:12,flex:1}}>{s.email}</span>
+                              <span style={{fontSize:11,padding:'1px 6px',borderRadius:4,fontWeight:600,
+                                background:s.provider==='google'?'#EFF6FF':s.provider==='outlook'?'#FFF7ED':'#F3F4F6',
+                                color:s.provider==='google'?T.indigo:s.provider==='outlook'?'#C2410C':'#6B7280'}}>
+                                {s.provider==='google'?'G':s.provider==='outlook'?'O':'—'}
+                              </span>
+                              <span style={{fontSize:11,color:s.warmup_score>=80?T.success:T.textMuted}}>
+                                {s.warmup_score!=null?s.warmup_score:'—'}
+                              </span>
+                              <span style={{fontSize:11,fontWeight:600,padding:'1px 6px',borderRadius:999,
+                                background:s.status&&(s.status.toLowerCase()==='connected'||s.status.toLowerCase()==='active')?'#DCFCE7':'#FEF2F2',
+                                color:s.status&&(s.status.toLowerCase()==='connected'||s.status.toLowerCase()==='active')?'#15803D':'#DC2626'}}>
+                                {s.status||'—'}
+                              </span>
+                              <span style={{fontSize:11,color:s.active_campaign_count>0?T.warning:T.textMuted}}>
+                                {s.active_campaign_count>0?s.active_campaign_count+' camps':'free'}
+                              </span>
+                            </div>
+                          );
+                        })}
+
+                        {/* Pagination */}
+                        {totalPages>1 && (
+                          <div style={{display:'flex',alignItems:'center',justifyContent:'center',
+                            gap:8,padding:'8px 12px',borderTop:'1px solid '+T.border,
+                            background:T.surfaceAlt}}>
+                            <button onClick={()=>setSenderPages(p=>({...p,[draft.id]:Math.max(0,page-1)}))}
+                              disabled={page===0}
+                              style={{width:28,height:28,border:'1px solid '+T.border,borderRadius:6,
+                                background:T.surface,cursor:page===0?'default':'pointer',
+                                fontSize:14,opacity:page===0?0.4:1,fontFamily:'inherit'}}>
+                              ←
+                            </button>
+                            {Array.from({length:totalPages},(_,i)=>(
+                              <button key={i} onClick={()=>setSenderPages(p=>({...p,[draft.id]:i}))}
+                                style={{width:28,height:28,border:'1px solid '+(i===page?T.indigo:T.border),
+                                  borderRadius:6,background:i===page?T.indigoLight:T.surface,
+                                  color:i===page?T.indigo:T.textSub,cursor:'pointer',
+                                  fontSize:12,fontWeight:i===page?700:400,fontFamily:'inherit'}}>
+                                {i+1}
+                              </button>
+                            ))}
+                            <button onClick={()=>setSenderPages(p=>({...p,[draft.id]:Math.min(totalPages-1,page+1)}))}
+                              disabled={page===totalPages-1}
+                              style={{width:28,height:28,border:'1px solid '+T.border,borderRadius:6,
+                                background:T.surface,cursor:page===totalPages-1?'default':'pointer',
+                                fontSize:14,opacity:page===totalPages-1?0.4:1,fontFamily:'inherit'}}>
+                              →
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   <div style={{display:'flex',gap:8,marginTop:10,alignItems:'center'}}>
                     <button
