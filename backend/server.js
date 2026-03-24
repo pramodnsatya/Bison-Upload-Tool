@@ -143,9 +143,15 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
     let activeCampaignSenders = new Set();
     const senderCampaignCount = {};
     try {
-      // Step 1: get list of 20 most recent campaigns
-      const listRes = await eb(req.params.id, '/api/campaigns?per_page=20&sort=created_at&order=desc');
-      const campList = Array.isArray(listRes) ? listRes : (listRes.data || []);
+      // Fetch all campaigns to find the active ones specifically
+      // Use status filter if API supports it, otherwise fetch recent and filter
+      const listRes = await eb(req.params.id, '/api/campaigns?per_page=50&sort=created_at&order=desc');
+      const allCamps = Array.isArray(listRes) ? listRes : (listRes.data || []);
+      // Only process campaigns that are actually active — skip everything else
+      const campList = allCamps.filter(camp => {
+        const st = (camp.status || '').toLowerCase();
+        return st === 'active' || st === 'running' || st === 'sending' || st === 'launched';
+      });
 
       // Step 2: fetch all sender emails per campaign (paginated, same 15/page structure)
       await Promise.all(
@@ -168,11 +174,14 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
               results.forEach(r => { allSnds = allSnds.concat(r.data || []); });
             }
 
-            allSnds.forEach(s => {
-              const sid = String(s.id);
-              senderCampaignCount[sid] = (senderCampaignCount[sid] || 0) + 1;
-              if (isActive) activeCampaignSenders.add(sid);
-            });
+            // Only count senders from ACTIVE campaigns — skip completed/paused/draft
+            if (isActive) {
+              allSnds.forEach(s => {
+                const sid = String(s.id);
+                senderCampaignCount[sid] = (senderCampaignCount[sid] || 0) + 1;
+                activeCampaignSenders.add(sid);
+              });
+            }
           } catch(_) {}
         })
       );
