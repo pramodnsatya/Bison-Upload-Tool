@@ -1132,7 +1132,7 @@ export default function App() {
                               <th>Total Sent</th>
                               <th>Bounce Guard</th>
                               <th>Status</th>
-                              <th># Campaigns</th>
+                              <th>Active In</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1192,7 +1192,7 @@ export default function App() {
                                       ? <span style={{fontSize:12,fontWeight:700,color:'#D97706',background:'#FEF3C7',padding:'2px 9px',borderRadius:999}}>
                                           {s.active_campaign_count}
                                         </span>
-                                      : <span style={{fontSize:11,color:T.textMuted}}>0</span>
+                                      : <span style={{fontSize:11,color:T.textMuted}}>free</span>
                                     }
                                   </td>
                                 </tr>
@@ -1653,72 +1653,75 @@ function DraftsTab({ clientId, clients, allSenders }) {
                 No senders found for this client.
               </div>
             ) : (
-              <div style={{border:'1px solid '+T.border,borderRadius:8,overflow:'hidden'}}>
-                {/* Select all header */}
-                <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',
-                  background:T.surfaceAlt,borderBottom:'1px solid '+T.border}}>
-                  <div onClick={()=>{
-                    const ns=new Set(selSend);
-                    pageAllChecked ? pageSenders.forEach(s=>ns.delete(s.id)) : pageSenders.forEach(s=>ns.add(s.id));
-                    setSelSend(ns);
-                  }} style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}}>
-                    <div style={{width:15,height:15,borderRadius:3,flexShrink:0,
-                      border:'2px solid '+(pageAllChecked?T.indigo:'#D1D5DB'),
-                      background:pageAllChecked?T.indigo:'transparent',
-                      display:'flex',alignItems:'center',justifyContent:'center'}}>
-                      {pageAllChecked&&<span style={{color:'#fff',fontSize:8,fontWeight:700}}>✓</span>}
-                    </div>
-                    <span style={{fontSize:11,fontWeight:600,color:T.textSub}}>Select all on this page</span>
-                  </div>
-                  <div style={{display:'flex',gap:0,marginLeft:'auto',alignItems:'center'}}>
-                    <span style={{fontSize:10,color:T.textMuted,minWidth:44,textAlign:'right',fontWeight:600}}>WU SCORE</span>
-                    <span style={{fontSize:10,color:T.textMuted,minWidth:48,textAlign:'right',fontWeight:600}}>WU SENT</span>
-                    <span style={{fontSize:10,color:T.textMuted,minWidth:48,textAlign:'right',fontWeight:600}}>SENT</span>
-                    <span style={{fontSize:10,color:T.textMuted,minWidth:72,textAlign:'right',fontWeight:600}}>STATUS</span>
-                    <span style={{fontSize:10,color:T.textMuted,minWidth:48,textAlign:'right',fontWeight:600}}>CAMPS</span>
-                  </div>
-                  <span style={{fontSize:11,color:T.textMuted,marginLeft:8}}>
-                    {filteredSenders.length>0?senderPage*PAGE_SIZE+1:0}–{Math.min((senderPage+1)*PAGE_SIZE,filteredSenders.length)} of {filteredSenders.length}
-                    {senderFilter.provider!=='all'||senderFilter.search?' (filtered)':''}
-                  </span>
-                </div>
-
-                {/* Rows */}
-                {pageSenders.map(s=>{
-                  const checked=selSend.has(s.id);
-                  return (
-                    <div key={s.id} onClick={()=>{const ns=new Set(selSend);checked?ns.delete(s.id):ns.add(s.id);setSelSend(ns);}}
-                      style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',
-                        cursor:'pointer',borderBottom:'1px solid '+T.surfaceAlt,
-                        background:checked?T.indigoLight:'transparent'}}>
-                      <div style={{width:15,height:15,borderRadius:3,flexShrink:0,
-                        border:'2px solid '+(checked?T.indigo:'#D1D5DB'),
-                        background:checked?T.indigo:'transparent',
-                        display:'flex',alignItems:'center',justifyContent:'center'}}>
-                        {checked&&<span style={{color:'#fff',fontSize:8,fontWeight:700}}>✓</span>}
-                      </div>
-                      <span style={{fontSize:12,flex:1}}>{s.email}</span>
-                      <span style={{fontSize:11,color:s.warmup_score>=80?T.success:s.warmup_score>=50?T.warning:T.textMuted,fontWeight:600,minWidth:32,textAlign:'right'}}>
-                        {s.warmup_score!=null?s.warmup_score:'—'}
-                      </span>
-                      <span style={{fontSize:11,color:T.textSub,minWidth:40,textAlign:'right'}}>
-                        {s.warmup_sent!=null?s.warmup_sent.toLocaleString():'—'}
-                      </span>
-                      <span style={{fontSize:11,color:T.textSub,minWidth:40,textAlign:'right'}}>
-                        {s.emails_sent!=null?s.emails_sent.toLocaleString():'—'}
-                      </span>
-                      <span style={{fontSize:11,fontWeight:600,padding:'1px 6px',borderRadius:999,flexShrink:0,
-                        background:(s.status||'').toLowerCase().includes('connect')||(s.status||'').toLowerCase()==='active'?'#DCFCE7':'#FEF2F2',
-                        color:(s.status||'').toLowerCase().includes('connect')||(s.status||'').toLowerCase()==='active'?'#15803D':'#DC2626'}}>
-                        {s.status||'—'}
-                      </span>
-                      <span style={{fontSize:11,color:s.active_campaign_count>0?T.warning:T.textMuted,flexShrink:0}}>
-                        {s.active_campaign_count>0?s.active_campaign_count+' camps':'free'}
-                      </span>
-                    </div>
-                  );
-                })}
-
+              <div style={{border:'1px solid '+T.border,borderRadius:8,overflowX:'auto'}}>
+                <table style={{width:'100%',borderCollapse:'collapse',minWidth:600}}>
+                  <thead>
+                    <tr style={{background:T.surfaceAlt,borderBottom:'2px solid '+T.border}}>
+                      <th style={{width:36,padding:'8px 12px',textAlign:'center'}}>
+                        <div onClick={()=>{
+                            const ns=new Set(selSend);
+                            pageAllChecked?pageSenders.forEach(s=>ns.delete(s.id)):pageSenders.forEach(s=>ns.add(s.id));
+                            setSelSend(ns);
+                          }}
+                          style={{width:15,height:15,borderRadius:3,border:'2px solid '+(pageAllChecked?T.indigo:'#D1D5DB'),
+                            background:pageAllChecked?T.indigo:'transparent',cursor:'pointer',
+                            display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto'}}>
+                          {pageAllChecked&&<span style={{color:'#fff',fontSize:8,fontWeight:700}}>✓</span>}
+                        </div>
+                      </th>
+                      <th style={{padding:'8px 12px',textAlign:'left',fontSize:11,fontWeight:600,color:T.textMuted}}>
+                        EMAIL
+                        <span style={{marginLeft:8,fontSize:10,color:T.textMuted,fontWeight:400}}>
+                          {filteredSenders.length>0?senderPage*PAGE_SIZE+1:0}–{Math.min((senderPage+1)*PAGE_SIZE,filteredSenders.length)} of {filteredSenders.length}
+                          {senderFilter.provider!=='all'||senderFilter.search?' (filtered)':''}
+                        </span>
+                      </th>
+                      <th style={{padding:'8px 8px',textAlign:'right',fontSize:11,fontWeight:600,color:T.textMuted,whiteSpace:'nowrap'}}>WU SCORE</th>
+                      <th style={{padding:'8px 8px',textAlign:'right',fontSize:11,fontWeight:600,color:T.textMuted,whiteSpace:'nowrap'}}>WU SENT</th>
+                      <th style={{padding:'8px 8px',textAlign:'right',fontSize:11,fontWeight:600,color:T.textMuted,whiteSpace:'nowrap'}}>TOTAL SENT</th>
+                      <th style={{padding:'8px 8px',textAlign:'center',fontSize:11,fontWeight:600,color:T.textMuted}}>STATUS</th>
+                      <th style={{padding:'8px 12px',textAlign:'center',fontSize:11,fontWeight:600,color:T.textMuted}}>ACTIVE IN</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pageSenders.map(s=>{
+                      const checked=selSend.has(s.id);
+                      const isOk=(s.status||'').toLowerCase().includes('connect')||(s.status||'').toLowerCase()==='active';
+                      const sc=s.warmup_score;
+                      const scColor=sc==null?T.textMuted:sc>=80?T.success:sc>=50?T.warning:T.error;
+                      const campCount=s.active_campaign_count||0;
+                      return (
+                        <tr key={s.id} onClick={()=>{const ns=new Set(selSend);checked?ns.delete(s.id):ns.add(s.id);setSelSend(ns);}}
+                          style={{cursor:'pointer',background:checked?T.indigoLight:'transparent',
+                            borderBottom:'1px solid '+T.surfaceAlt}}>
+                          <td style={{padding:'8px 12px',textAlign:'center'}}>
+                            <div style={{width:15,height:15,borderRadius:3,border:'2px solid '+(checked?T.indigo:'#D1D5DB'),
+                              background:checked?T.indigo:'transparent',margin:'0 auto',
+                              display:'flex',alignItems:'center',justifyContent:'center'}}>
+                              {checked&&<span style={{color:'#fff',fontSize:8,fontWeight:700}}>✓</span>}
+                            </div>
+                          </td>
+                          <td style={{padding:'8px 12px',fontSize:12}}>{s.email}</td>
+                          <td style={{padding:'8px 8px',textAlign:'right',fontWeight:600,fontSize:12,color:scColor}}>{sc??'—'}</td>
+                          <td style={{padding:'8px 8px',textAlign:'right',fontSize:12,color:T.textSub}}>{s.warmup_sent!=null?Number(s.warmup_sent).toLocaleString():'—'}</td>
+                          <td style={{padding:'8px 8px',textAlign:'right',fontSize:12,color:T.textSub}}>{s.emails_sent!=null?Number(s.emails_sent).toLocaleString():'—'}</td>
+                          <td style={{padding:'8px 8px',textAlign:'center'}}>
+                            <span style={{fontSize:11,fontWeight:600,padding:'2px 8px',borderRadius:999,whiteSpace:'nowrap',
+                              background:isOk?'#DCFCE7':'#FEF2F2',color:isOk?'#15803D':'#DC2626'}}>
+                              {s.status||'Connected'}
+                            </span>
+                          </td>
+                          <td style={{padding:'8px 12px',textAlign:'center'}}>
+                            {campCount>0
+                              ?<span style={{fontSize:12,fontWeight:700,color:'#D97706',background:'#FEF3C7',padding:'2px 9px',borderRadius:999}}>{campCount}</span>
+                              :<span style={{fontSize:11,color:T.textMuted}}>free</span>
+                            }
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
                 {/* Pagination */}
                 {totalPages>1 && (
                   <div style={{display:'flex',alignItems:'center',justifyContent:'center',
