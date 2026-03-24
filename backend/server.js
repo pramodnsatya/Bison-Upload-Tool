@@ -603,3 +603,22 @@ app.patch('/clients/:id/draft-campaigns/:cid/settings', async (req, res) => {
 
 const PORT = process.env.PORT || 3847;
 app.listen(PORT, () => console.log(`✅ Server on port ${PORT}`));
+
+// Debug: see raw pagination structure from sender-emails API
+app.get('/clients/:id/sender-emails/pagination-debug', async (req, res) => {
+  try {
+    const r1 = await eb(req.params.id, '/api/sender-emails?per_page=5');
+    const r2 = await eb(req.params.id, '/api/sender-emails?per_page=5&page=2');
+    const r3 = await eb(req.params.id, '/api/sender-emails?per_page=100');
+    res.json({
+      page1_keys: Object.keys(r1),
+      page1_is_array: Array.isArray(r1),
+      page1_count: (Array.isArray(r1) ? r1 : r1.data || []).length,
+      page1_meta: r1.meta || r1.pagination || r1.links || r1.total || null,
+      page2_count: (Array.isArray(r2) ? r2 : r2.data || []).length,
+      per100_count: (Array.isArray(r3) ? r3 : r3.data || []).length,
+      per100_meta: r3.meta || r3.pagination || null,
+      raw_top_level: typeof r1 === 'object' && !Array.isArray(r1) ? Object.keys(r1) : 'is array',
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
