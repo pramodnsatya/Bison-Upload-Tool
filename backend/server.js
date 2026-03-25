@@ -142,6 +142,8 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
     // (max ~8 active at once, 20 gives comfortable buffer without latency)
     let activeCampaignSenders = new Set();
     const senderCampaignCount = {};
+    const senderNextSend = {};
+    const senderNextSend = {};
     try {
       // Fetch all campaigns to find the active ones specifically
       // Use status filter if API supports it, otherwise fetch recent and filter
@@ -181,6 +183,14 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
                 senderCampaignCount[sid] = (senderCampaignCount[sid] || 0) + 1;
                 activeCampaignSenders.add(sid);
               });
+              // Track next scheduled send date from campaign data
+              const nextDate = camp.next_send_at || camp.next_scheduled_at || camp.next_email_at || null;
+              if (nextDate) {
+                allSnds.forEach(s => {
+                  const sid = String(s.id);
+                  if (!senderNextSend[sid] || nextDate < senderNextSend[sid]) senderNextSend[sid] = nextDate;
+                });
+              }
             }
           } catch(_) {}
         })
@@ -223,6 +233,8 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
         bounce_protection:     bounceProtection,
         active_campaigns:      activeCampaignSenders.has(String(s.id)),
         active_campaign_count: senderCampaignCount[String(s.id)] || 0,
+        next_send_at: senderNextSend[String(s.id)] || null,
+        next_send_at: senderNextSend[String(s.id)] || null,
         daily_limit:           s.daily_limit ?? null,
         tags:                  tags.map(t => t.name),
       };
@@ -363,16 +375,24 @@ app.post('/clients/:id/campaigns/:cid/leads', async (req, res) => {
 
 
 
-// Create sequence steps — confirmed endpoint from EmailBison support
-// POST /api/campaigns/{campaign_id}/sequence-steps
-// Body: { title, sequence_steps: [{email_subject, email_body, wait_in_days, order}] }
+// Create/Replace sequence steps — deletes existing steps first to prevent duplication
 app.post('/clients/:id/campaigns/:cid/sequence', async (req, res) => {
   try {
     const { steps } = req.body;
     if (!steps?.length) return res.status(400).json({ error: 'steps required' });
 
-    // Format payload as EmailBison support documented
-    // wait_in_days must be >= 1 for all steps (EmailBison requirement)
+    // Step 1: Delete all existing sequence steps first
+    try {
+      const existing = await eb(req.params.id, `/api/campaigns/${req.params.cid}/sequence-steps?per_page=20`);
+      const existingSteps = existing.data || (Array.isArray(existing) ? existing : []);
+      await Promise.all(
+        existingSteps.map(s =>
+          eb(req.params.id, `/api/campaigns/sequence-steps/${s.id}`, 'DELETE').catch(() => {})
+        )
+      );
+    } catch (_) {}
+
+    // Step 2: Create new sequence steps
     const sequence_steps = steps.map((s, i) => ({
       email_subject: s.subject,
       email_body:    s.body,

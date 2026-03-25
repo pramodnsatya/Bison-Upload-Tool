@@ -566,7 +566,8 @@ export default function App() {
     setLoading(true); clearErr();
     try {
       for (const c of created) {
-        const ids = [...(selSenders[c.name]||[])];
+        const senderSet = selSenders[c.name];
+        const ids = senderSet instanceof Set ? [...senderSet] : Array.isArray(senderSet) ? senderSet : [];
         if (!ids.length) { addLog(`⚠ No senders for ${c.name}`,'warning'); continue; }
         addLog(`Assigning ${ids.length} senders → ${c.name}...`);
         await api(`/clients/${clientId}/campaigns/${c.id}/senders`, { method:'POST', body:JSON.stringify({ senderIds:ids }) });
@@ -1205,6 +1206,19 @@ export default function App() {
                         borderRadius:7, fontSize:11, fontFamily:'inherit', outline:'none', background:T.surface }} />
                   </div>
 
+                  {/* Sender needed counter */}
+                  <div style={{ display:'flex', gap:12, marginBottom:8, padding:'10px 14px', background: enough?'#F0FDF4':'#FFFBEB',
+                    border:`1.5px solid ${enough?'#A7F3D0':'#FDE68A'}`, borderRadius:8, alignItems:'center', flexWrap:'wrap' }}>
+                    <span style={{ fontSize:13, fontWeight:600, color: enough?T.success:T.warning }}>
+                      {enough ? '✓ Enough senders selected' : `Need ${Math.max(0,needed-sel.size)} more sender${needed-sel.size!==1?'s':''}`}
+                    </span>
+                    <span style={{ fontSize:12, color:T.textSub }}>
+                      {camp.leads.length} leads ÷ {camp.senderType==='outlook'?5:15}/day/sender = <strong>{needed} senders needed</strong>
+                    </span>
+                    <span style={{ marginLeft:'auto', fontSize:13, fontWeight:700, color:sel.size>0?T.indigo:T.textMuted }}>
+                      {sel.size} selected
+                    </span>
+                  </div>
                   <div style={{ border:`1px solid ${T.border}`, borderRadius:8, overflowX:'auto' }}>
                     <table style={{ width:'100%', borderCollapse:'collapse', minWidth:580 }}>
                       <thead>
@@ -1235,6 +1249,7 @@ export default function App() {
                           <th style={{ padding:'8px 8px', textAlign:'center', fontSize:11, fontWeight:600, color:T.textMuted }}>BOUNCE</th>
                           <th style={{ padding:'8px 8px', textAlign:'center', fontSize:11, fontWeight:600, color:T.textMuted }}>STATUS</th>
                           <th style={{ padding:'8px 12px', textAlign:'center', fontSize:11, fontWeight:600, color:T.textMuted }}>ACTIVE IN</th>
+                          <th style={{ padding:'8px 12px', textAlign:'center', fontSize:11, fontWeight:600, color:T.textMuted }}>NEXT SEND</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1278,6 +1293,11 @@ export default function App() {
                                 {campCount > 0
                                   ? <span style={{fontSize:12,fontWeight:700,color:'#D97706',background:'#FEF3C7',padding:'2px 9px',borderRadius:999}}>{campCount}</span>
                                   : <span style={{fontSize:11,color:T.textMuted}}>free</span>}
+                              </td>
+                              <td style={{ padding:'8px 12px', textAlign:'center', fontSize:11, color:T.textSub }}>
+                                {s.next_send_at
+                                  ? new Date(s.next_send_at).toLocaleDateString('en-US',{month:'short',day:'numeric'})
+                                  : <span style={{color:T.textMuted}}>—</span>}
                               </td>
                             </tr>
                           );
@@ -1782,6 +1802,7 @@ function DraftsTab({ clientId, clients, allSenders }) {
                       <th style={{padding:'8px 8px',textAlign:'center',fontSize:11,fontWeight:600,color:T.textMuted}}>BOUNCE</th>
                       <th style={{padding:'8px 8px',textAlign:'center',fontSize:11,fontWeight:600,color:T.textMuted}}>STATUS</th>
                       <th style={{padding:'8px 12px',textAlign:'center',fontSize:11,fontWeight:600,color:T.textMuted}}>ACTIVE IN</th>
+                      <th style={{padding:'8px 12px',textAlign:'center',fontSize:11,fontWeight:600,color:T.textMuted}}>NEXT SEND</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1826,6 +1847,11 @@ function DraftsTab({ clientId, clients, allSenders }) {
                               ?<span style={{fontSize:12,fontWeight:700,color:'#D97706',background:'#FEF3C7',padding:'2px 9px',borderRadius:999}}>{campCount}</span>
                               :<span style={{fontSize:11,color:T.textMuted}}>free</span>
                             }
+                          </td>
+                          <td style={{padding:'8px 12px',textAlign:'center',fontSize:11,color:T.textSub}}>
+                            {s.next_send_at
+                              ?new Date(s.next_send_at).toLocaleDateString('en-US',{month:'short',day:'numeric'})
+                              :<span style={{color:T.textMuted}}>—</span>}
                           </td>
                         </tr>
                       );
