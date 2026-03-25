@@ -143,7 +143,6 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
     let activeCampaignSenders = new Set();
     const senderCampaignCount = {};
     const senderNextSend = {};
-    const senderNextSend = {};
     try {
       // Fetch all campaigns to find the active ones specifically
       // Use status filter if API supports it, otherwise fetch recent and filter
@@ -233,7 +232,6 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
         bounce_protection:     bounceProtection,
         active_campaigns:      activeCampaignSenders.has(String(s.id)),
         active_campaign_count: senderCampaignCount[String(s.id)] || 0,
-        next_send_at: senderNextSend[String(s.id)] || null,
         next_send_at: senderNextSend[String(s.id)] || null,
         daily_limit:           s.daily_limit ?? null,
         tags:                  tags.map(t => t.name),
