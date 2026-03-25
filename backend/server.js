@@ -691,6 +691,14 @@ app.get('/clients/:id/campaigns/:cid/senders-debug', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Debug: see raw sequence steps structure including split variants
+app.get('/clients/:id/campaigns/:cid/sequence-raw', async (req, res) => {
+  try {
+    const data = await eb(req.params.id, `/api/campaigns/${req.params.cid}/sequence-steps?per_page=50`);
+    res.json(data);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
   app.use(express.static(buildPath));
   app.get('*', (_req, res) => res.sendFile(join(buildPath, 'index.html')));
 }
