@@ -697,6 +697,361 @@ app.get('/clients/:id/campaigns/:cid/sequence-raw', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── MCP SERVER ──────────────────────────────────────────────────────────────
+// Streamable HTTP transport — single /mcp endpoint (POST + GET)
+// Register in Claude.ai: Settings → Integrations → Add MCP → URL type
+// URL: https://bison-upload-tool-production.up.railway.app/mcp
+
+const MCP_TOOLS = [
+  {
+    name: 'list_clients',
+    description: 'List all available EmailBison client workspaces',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'list_campaigns',
+    description: 'List campaigns for a client. Filter by status (active, draft, paused, completed).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client ID (e.g. soona, kastle, dagster)' },
+        status: { type: 'string', description: 'Filter by status: active, draft, paused, completed. Leave empty for all.' },
+      },
+      required: ['client_id'],
+    },
+  },
+  {
+    name: 'list_draft_campaigns',
+    description: 'List draft campaigns with their todo status (what still needs doing)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client ID' },
+      },
+      required: ['client_id'],
+    },
+  },
+  {
+    name: 'list_senders',
+    description: 'List sender emails for a client with warmup score, status, and active campaign count',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client ID' },
+        provider: { type: 'string', description: 'Filter by provider: google, outlook, all (default: all)' },
+        min_warmup_score: { type: 'number', description: 'Minimum warmup score (0-100)' },
+        ready_only: { type: 'boolean', description: 'Only show senders with warmup>100 or emails_sent>0 and status Connected' },
+      },
+      required: ['client_id'],
+    },
+  },
+  {
+    name: 'get_campaign_sequence',
+    description: 'Get the email sequence steps for a campaign',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client ID' },
+        campaign_id: { type: 'string', description: 'Campaign numeric ID' },
+      },
+      required: ['client_id', 'campaign_id'],
+    },
+  },
+  {
+    name: 'get_campaign_senders',
+    description: 'Get sender emails currently assigned to a campaign',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client ID' },
+        campaign_id: { type: 'string', description: 'Campaign numeric ID' },
+      },
+      required: ['client_id', 'campaign_id'],
+    },
+  },
+  {
+    name: 'apply_sequence',
+    description: 'Set the email sequence for a campaign (replaces existing steps)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client ID' },
+        campaign_id: { type: 'string', description: 'Campaign numeric ID' },
+        steps: {
+          type: 'array',
+          description: 'Email steps',
+          items: {
+            type: 'object',
+            properties: {
+              subject: { type: 'string' },
+              body: { type: 'string' },
+              delay_days: { type: 'number', description: 'Days after previous email (min 1)' },
+            },
+            required: ['subject', 'body'],
+          },
+        },
+      },
+      required: ['client_id', 'campaign_id', 'steps'],
+    },
+  },
+  {
+    name: 'assign_senders',
+    description: 'Assign sender email IDs to a campaign',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client ID' },
+        campaign_id: { type: 'string', description: 'Campaign numeric ID' },
+        sender_ids: { type: 'array', items: { type: 'number' }, description: 'Array of sender email numeric IDs' },
+      },
+      required: ['client_id', 'campaign_id', 'sender_ids'],
+    },
+  },
+  {
+    name: 'apply_settings',
+    description: 'Apply schedule (Mon-Fri 8AM-5PM ET) and plain text settings to a campaign',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client ID' },
+        campaign_id: { type: 'string', description: 'Campaign numeric ID' },
+      },
+      required: ['client_id', 'campaign_id'],
+    },
+  },
+  {
+    name: 'copy_sequence_to_campaign',
+    description: 'Copy the email sequence from one campaign and apply it to another campaign',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client ID' },
+        source_campaign_id: { type: 'string', description: 'Campaign to copy sequence FROM' },
+        target_campaign_id: { type: 'string', description: 'Campaign to apply sequence TO' },
+      },
+      required: ['client_id', 'source_campaign_id', 'target_campaign_id'],
+    },
+  },
+  {
+    name: 'search_campaigns',
+    description: 'Search campaigns by name for a client',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client ID' },
+        query: { type: 'string', description: 'Search term to find in campaign names' },
+      },
+      required: ['client_id'],
+    },
+  },
+];
+
+async function handleMcpTool(name, args) {
+  switch (name) {
+
+    case 'list_clients':
+      return CLIENTS.map(c => ({ id: c.id, name: c.name }));
+
+    case 'list_campaigns': {
+      const res = await eb(args.client_id, '/api/campaigns?per_page=100&sort=created_at&order=desc');
+      let camps = Array.isArray(res) ? res : (res.data || []);
+      if (args.status) camps = camps.filter(c => c.status?.toLowerCase() === args.status.toLowerCase());
+      return camps.map(c => ({ id: c.id, name: c.name, status: c.status, leads: c.total_leads, created: c.created_at }));
+    }
+
+    case 'list_draft_campaigns': {
+      const res = await eb(args.client_id, '/api/campaigns?per_page=100&sort=created_at&order=desc');
+      const camps = (Array.isArray(res) ? res : (res.data || [])).filter(c => c.status?.toLowerCase() === 'draft');
+      return camps.map(c => {
+        const todo = [];
+        if (!c.total_leads) todo.push('upload leads');
+        if (!c.sending_days && !c.monday) todo.push('set schedule');
+        return { id: c.id, name: c.name, leads: c.total_leads || 0, todo };
+      });
+    }
+
+    case 'list_senders': {
+      const res = await eb(args.client_id, '/api/sender-emails?page=1');
+      const lastPage = res.meta?.last_page || 1;
+      let senders = res.data || [];
+      if (lastPage > 1) {
+        const pages = Array.from({length: lastPage - 1}, (_, i) => i + 2);
+        const results = await Promise.all(pages.map(p => eb(args.client_id, `/api/sender-emails?page=${p}`).catch(() => ({data:[]}))));
+        results.forEach(r => { senders = senders.concat(r.data || []); });
+      }
+      let filtered = senders;
+      if (args.provider && args.provider !== 'all') {
+        filtered = filtered.filter(s => (s.type||'').toLowerCase().includes(args.provider));
+      }
+      if (args.min_warmup_score) {
+        filtered = filtered.filter(s => (s.warmup_score || 0) >= args.min_warmup_score);
+      }
+      if (args.ready_only) {
+        filtered = filtered.filter(s => s.status === 'Connected' && ((s.warmup_sent||0) > 100 || (s.emails_sent_count||0) > 0));
+      }
+      return filtered.map(s => ({
+        id: s.id, email: s.email, name: s.name,
+        warmup_score: s.warmup_score,
+        warmup_sent: s.warmup_sent,
+        emails_sent: s.emails_sent_count,
+        status: s.status,
+        type: s.type,
+      }));
+    }
+
+    case 'get_campaign_sequence': {
+      const data = await eb(args.client_id, `/api/campaigns/${args.campaign_id}/sequence-steps?per_page=20`);
+      const arr = Array.isArray(data) ? data : (data.data || []);
+      return arr.map(s => ({
+        id: s.id, order: s.order,
+        subject: s.email_subject || s.subject,
+        body: s.email_body || s.body,
+        delay_days: s.wait_in_days || s.delay_days,
+      })).sort((a,b) => a.order - b.order);
+    }
+
+    case 'get_campaign_senders': {
+      const first = await eb(args.client_id, `/api/campaigns/${args.campaign_id}/sender-emails?page=1`);
+      let senders = first.data || [];
+      const lastPage = first.meta?.last_page || 1;
+      if (lastPage > 1) {
+        const pages = Array.from({length: lastPage-1}, (_,i) => i+2);
+        const results = await Promise.all(pages.map(p => eb(args.client_id, `/api/campaigns/${args.campaign_id}/sender-emails?page=${p}`).catch(()=>({data:[]}))));
+        results.forEach(r => { senders = senders.concat(r.data||[]); });
+      }
+      return senders.map(s => ({ id: s.id, email: s.email, name: s.name, status: s.status }));
+    }
+
+    case 'apply_sequence': {
+      // Delete existing steps first
+      try {
+        const ex = await eb(args.client_id, `/api/campaigns/${args.campaign_id}/sequence-steps?per_page=20`);
+        const exArr = ex.data || (Array.isArray(ex) ? ex : []);
+        await Promise.all(exArr.map(s => eb(args.client_id, `/api/campaigns/sequence-steps/${s.id}`, 'DELETE').catch(()=>{})));
+      } catch(_) {}
+      // Create new steps
+      const sequence_steps = args.steps.map((s, i) => ({
+        email_subject: s.subject,
+        email_body: s.body,
+        wait_in_days: Math.max(1, i === 0 ? 1 : (s.delay_days ?? i * 3)),
+        order: i + 1,
+      }));
+      await eb(args.client_id, `/api/campaigns/${args.campaign_id}/sequence-steps`, 'POST', { title: 'Main Sequence', sequence_steps });
+      return { ok: true, steps_created: args.steps.length };
+    }
+
+    case 'assign_senders': {
+      await eb(args.client_id, `/api/campaigns/${args.campaign_id}/attach-sender-emails`, 'POST', { sender_email_ids: args.sender_ids });
+      return { ok: true, assigned: args.sender_ids.length };
+    }
+
+    case 'apply_settings': {
+      const schedulePayload = { monday:true, tuesday:true, wednesday:true, thursday:true, friday:true, saturday:false, sunday:false, start_time:'08:00:00', end_time:'17:00:00', timezone:'America/New_York' };
+      try { await eb(args.client_id, `/api/campaigns/${args.campaign_id}/schedule`, 'POST', schedulePayload); } catch(_) {
+        try { await eb(args.client_id, `/api/campaigns/${args.campaign_id}/schedule`, 'PUT', schedulePayload); } catch(_) {}
+      }
+      try { await eb(args.client_id, `/api/campaigns/${args.campaign_id}/update`, 'PATCH', { plain_text: true, track_opens: false, track_clicks: false }); } catch(_) {}
+      return { ok: true, schedule: 'Mon-Fri 8AM-5PM ET', plain_text: true };
+    }
+
+    case 'copy_sequence_to_campaign': {
+      const data = await eb(args.client_id, `/api/campaigns/${args.source_campaign_id}/sequence-steps?per_page=20`);
+      const arr = Array.isArray(data) ? data : (data.data || []);
+      const steps = arr.sort((a,b) => a.order - b.order).map(s => ({
+        subject: s.email_subject || s.subject || '',
+        body: s.email_body || s.body || '',
+        delay_days: Math.max(1, s.wait_in_days || s.delay_days || 1),
+      }));
+      if (!steps.length) throw new Error('Source campaign has no sequence steps');
+      // Delete existing in target
+      try {
+        const ex = await eb(args.client_id, `/api/campaigns/${args.target_campaign_id}/sequence-steps?per_page=20`);
+        const exArr = ex.data || (Array.isArray(ex) ? ex : []);
+        await Promise.all(exArr.map(s => eb(args.client_id, `/api/campaigns/sequence-steps/${s.id}`, 'DELETE').catch(()=>{})));
+      } catch(_) {}
+      const sequence_steps = steps.map((s, i) => ({ email_subject: s.subject, email_body: s.body, wait_in_days: Math.max(1, i===0?1:s.delay_days), order: i+1 }));
+      await eb(args.client_id, `/api/campaigns/${args.target_campaign_id}/sequence-steps`, 'POST', { title: 'Main Sequence', sequence_steps });
+      return { ok: true, steps_copied: steps.length };
+    }
+
+    case 'search_campaigns': {
+      const res = await eb(args.client_id, '/api/campaigns?per_page=200&sort=created_at&order=desc');
+      let camps = Array.isArray(res) ? res : (res.data || []);
+      if (args.query) camps = camps.filter(c => c.name?.toLowerCase().includes(args.query.toLowerCase()));
+      return camps.slice(0, 30).map(c => ({ id: c.id, name: c.name, status: c.status, leads: c.total_leads }));
+    }
+
+    default:
+      throw new Error(`Unknown tool: ${name}`);
+  }
+}
+
+// MCP endpoint — handles both POST (tool calls) and GET (capability discovery)
+app.get('/mcp', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  // Send server capabilities
+  const caps = {
+    jsonrpc: '2.0',
+    method: 'notifications/initialized',
+    params: {}
+  };
+  res.write(`data: ${JSON.stringify(caps)}\n\n`);
+  req.on('close', () => res.end());
+});
+
+app.post('/mcp', async (req, res) => {
+  const { jsonrpc, id, method, params } = req.body;
+
+  // Initialize handshake
+  if (method === 'initialize') {
+    return res.json({
+      jsonrpc: '2.0', id,
+      result: {
+        protocolVersion: '2024-11-05',
+        capabilities: { tools: {} },
+        serverInfo: { name: 'emailbison-mcp', version: '1.0.0' },
+      },
+    });
+  }
+
+  // List available tools
+  if (method === 'tools/list') {
+    return res.json({ jsonrpc: '2.0', id, result: { tools: MCP_TOOLS } });
+  }
+
+  // Execute a tool
+  if (method === 'tools/call') {
+    const { name, arguments: args } = params;
+    try {
+      const result = await handleMcpTool(name, args || {});
+      return res.json({
+        jsonrpc: '2.0', id,
+        result: {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        },
+      });
+    } catch (e) {
+      return res.json({
+        jsonrpc: '2.0', id,
+        result: {
+          content: [{ type: 'text', text: `Error: ${e.message}` }],
+          isError: true,
+        },
+      });
+    }
+  }
+
+  // Ping / other notifications
+  if (method === 'notifications/initialized' || method === 'ping') {
+    return res.json({ jsonrpc: '2.0', id, result: {} });
+  }
+
+  res.status(400).json({ jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } });
+});
+
+
   app.use(express.static(buildPath));
   app.get('*', (_req, res) => res.sendFile(join(buildPath, 'index.html')));
 }
