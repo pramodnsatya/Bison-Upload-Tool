@@ -390,12 +390,13 @@ app.post('/clients/:id/campaigns/:cid/sequence', async (req, res) => {
       );
     } catch (_) {}
 
-    // Step 2: Create new sequence steps
+    // Step 2: Create new sequence steps (include reply_to_thread for follow-ups)
     const sequence_steps = steps.map((s, i) => ({
       email_subject: s.subject,
       email_body:    s.body,
       wait_in_days:  Math.max(1, i === 0 ? 1 : (s.delay_days ?? i * 3)),
       order:         i + 1,
+      reply_to_thread: s.reply_to_thread ?? (i > 0), // follow-ups default to reply thread
     }));
 
     const data = await eb(req.params.id,

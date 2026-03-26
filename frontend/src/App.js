@@ -3,7 +3,9 @@ import { useState, useEffect } from 'react';
 // ─── API ──────────────────────────────────────────────────────────────────────
 async function api(path, opts = {}) {
   const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts });
-  const data = await res.json();
+  let data;
+  try { data = await res.json(); }
+  catch(_) { throw new Error(`Server error (HTTP ${res.status}) — Railway may be restarting, please retry`); }
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data;
 }
@@ -1047,12 +1049,18 @@ export default function App() {
                       {i===0 ? 'Email 1 — Initial outreach' : `Follow-up ${i} — Reply in same thread`}
                     </span>
                     {i > 0 && (
-                      <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                      <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
                         <span style={{ fontSize:12, color:T.textSub }}>Send on day</span>
                         <input type="number" min={1} max={30} value={s.delay_days}
                           onChange={e=>setEmailSteps(prev=>prev.map((x,j)=>j===i?{...x,delay_days:parseInt(e.target.value)||1}:x))}
                           style={{ width:52, padding:'4px 8px', border:`1.5px solid ${T.border}`, borderRadius:8,
                             fontSize:13, textAlign:'center', fontFamily:'inherit', outline:'none', background:T.surface }} />
+                        <label style={{ display:'flex', alignItems:'center', gap:5, cursor:'pointer', fontSize:12, color:T.textSub, userSelect:'none' }}>
+                          <input type="checkbox" checked={s.reply_to_thread !== false}
+                            onChange={e=>setEmailSteps(prev=>prev.map((x,j)=>j===i?{...x,reply_to_thread:e.target.checked}:x))}
+                            style={{ cursor:'pointer', width:14, height:14 }} />
+                          Reply in same thread
+                        </label>
                         <button onClick={()=>setEmailSteps(prev=>prev.filter((_,j)=>j!==i))}
                           style={{ background:'none', border:'none', cursor:'pointer', color:T.textMuted, fontSize:18, lineHeight:1 }}>×</button>
                       </div>
@@ -1088,7 +1096,7 @@ export default function App() {
 
             {/* Add follow-up */}
             {emailSteps.length < 5 && (
-              <button onClick={()=>setEmailSteps(prev=>[...prev,{subject:'',body:'',delay_days:prev.length*3}])}
+              <button onClick={()=>setEmailSteps(prev=>[...prev,{subject:'',body:'',delay_days:prev.length*3,reply_to_thread:true}])}
                 style={{ marginTop:12, width:'100%', padding:'11px', border:`2px dashed ${T.border}`,
                   borderRadius:12, background:'transparent', cursor:'pointer', fontSize:13,
                   color:T.textSub, fontWeight:600, fontFamily:'inherit' }}>
@@ -1685,12 +1693,18 @@ function DraftsTab({ clientId, clients, allSenders }) {
                       {i===0?'Email 1 — Initial outreach':'Follow-up '+i}
                     </span>
                     {i>0 && (
-                      <div style={{display:'flex',alignItems:'center',gap:6,marginLeft:'auto'}}>
+                      <div style={{display:'flex',alignItems:'center',gap:6,marginLeft:'auto',flexWrap:'wrap'}}>
                         <span style={{fontSize:11,color:T.textMuted}}>Day</span>
                         <input type="number" min={1} value={s.delay_days}
                           onChange={e=>setSteps(prev=>prev.map((x,j)=>j===i?{...x,delay_days:parseInt(e.target.value)||1}:x))}
                           style={{width:44,padding:'2px 6px',border:'1px solid '+T.border,
                             borderRadius:5,fontSize:12,textAlign:'center',fontFamily:'inherit',outline:'none'}} />
+                        <label style={{display:'flex',alignItems:'center',gap:4,cursor:'pointer',fontSize:11,color:T.textSub,userSelect:'none'}}>
+                          <input type="checkbox" checked={s.reply_to_thread !== false}
+                            onChange={e=>setSteps(prev=>prev.map((x,j)=>j===i?{...x,reply_to_thread:e.target.checked}:x))}
+                            style={{cursor:'pointer',width:13,height:13}} />
+                          Thread reply
+                        </label>
                         <button onClick={()=>setSteps(prev=>prev.filter((_,j)=>j!==i))}
                           style={{background:'none',border:'none',cursor:'pointer',fontSize:18,
                             color:T.textMuted,lineHeight:1,padding:0}}>×</button>
@@ -1714,7 +1728,7 @@ function DraftsTab({ clientId, clients, allSenders }) {
 
             <div style={{display:'flex',gap:8,marginTop:12,alignItems:'center'}}>
               {steps.length<5 && (
-                <button onClick={()=>setSteps(prev=>[...prev,{subject:'',body:'',delay_days:prev.length*3}])}
+                <button onClick={()=>setSteps(prev=>[...prev,{subject:'',body:'',delay_days:prev.length*3,reply_to_thread:true}])}
                   style={{padding:'7px 14px',border:'1.5px dashed '+T.border,borderRadius:8,
                     background:'transparent',fontSize:12,cursor:'pointer',
                     color:T.textSub,fontFamily:'inherit',fontWeight:600}}>
