@@ -706,6 +706,54 @@ app.get('/clients/:id/campaigns/:cid/sequence-raw', async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Helper: fetch fully enriched senders for MCP (same logic as /clients/:id/sender-emails route)
+async function mcpFetchEnrichedSenders(clientId) {
+  // Fetch all sender pages
+  const first = await eb(clientId, '/api/sender-emails?page=1');
+  let senders = first.data || [];
+  const lastPage = first.meta?.last_page || 1;
+  if (lastPage > 1) {
+    const pages = Array.from({length: lastPage - 1}, (_, i) => i + 2);
+    const results = await Promise.all(pages.map(p => eb(clientId, `/api/sender-emails?page=${p}`).catch(() => ({data:[]}))));
+    results.forEach(r => { senders = senders.concat(r.data || []); });
+  }
+
+  // Fetch warmup data
+  let warmupMap = {};
+  try {
+    const wFirst = await eb(clientId, '/api/warmup/sender-emails?page=1');
+    let wAll = wFirst.data || [];
+    const wLast = wFirst.meta?.last_page || 1;
+    if (wLast > 1) {
+      const wPages = Array.from({length: wLast - 1}, (_, i) => i + 2);
+      const wResults = await Promise.all(wPages.map(p => eb(clientId, `/api/warmup/sender-emails?page=${p}`).catch(() => ({data:[]}))));
+      wResults.forEach(r => { wAll = wAll.concat(r.data || []); });
+    }
+    wAll.forEach(ws => { warmupMap[ws.sender_email_id ?? ws.id] = ws; });
+  } catch(_) {}
+
+  return senders.map(s => {
+    const wu = warmupMap[s.id] || {};
+    const typeField = (s.type || '').toLowerCase();
+    let provider = 'other';
+    if (typeField.includes('google') || typeField.includes('gmail')) provider = 'google';
+    else if (typeField.includes('microsoft') || typeField.includes('outlook') || typeField.includes('office')) provider = 'outlook';
+    const bounceTag = (s.tags || []).find(t => t.name?.toLowerCase().includes('bounce'));
+    return {
+      id: s.id,
+      email: s.email,
+      name: s.name,
+      provider,
+      warmup_score: wu.reputation_score ?? s.warmup_score ?? null,
+      warmup_sent: wu.total_sent_count ?? s.warmup_sent ?? null,
+      emails_sent: s.emails_sent_count ?? null,
+      bounce_protection: !!bounceTag,
+      status: s.status,
+      active_campaign_count: 0, // skip campaign counting for MCP speed
+    };
+  });
+}
+
 // ─── MCP SERVER ──────────────────────────────────────────────────────────────
 // Streamable HTTP transport — single /mcp endpoint (POST + GET)
 // Register in Claude.ai: Settings → Integrations → Add MCP → URL type
@@ -880,31 +928,32 @@ async function handleMcpTool(name, args) {
     }
 
     case 'list_senders': {
-      const res = await eb(args.client_id, '/api/sender-emails?page=1');
-      const lastPage = res.meta?.last_page || 1;
-      let senders = res.data || [];
-      if (lastPage > 1) {
-        const pages = Array.from({length: lastPage - 1}, (_, i) => i + 2);
-        const results = await Promise.all(pages.map(p => eb(args.client_id, `/api/sender-emails?page=${p}`).catch(() => ({data:[]}))));
-        results.forEach(r => { senders = senders.concat(r.data || []); });
-      }
-      let filtered = senders;
+      // Use the enriched sender endpoint which merges warmup scores, warmup sent, bounce protection etc.
+      const enriched = await mcpFetchEnrichedSenders(args.client_id);
+      let filtered = enriched;
       if (args.provider && args.provider !== 'all') {
-        filtered = filtered.filter(s => (s.type||'').toLowerCase().includes(args.provider));
+        filtered = filtered.filter(s => s.provider === args.provider);
       }
       if (args.min_warmup_score) {
         filtered = filtered.filter(s => (s.warmup_score || 0) >= args.min_warmup_score);
       }
       if (args.ready_only) {
-        filtered = filtered.filter(s => s.status === 'Connected' && ((s.warmup_sent||0) > 100 || (s.emails_sent_count||0) > 0));
+        filtered = filtered.filter(s =>
+          s.status?.toLowerCase() === 'connected' &&
+          ((s.warmup_sent || 0) > 100 || (s.emails_sent || 0) > 0)
+        );
       }
       return filtered.map(s => ({
-        id: s.id, email: s.email, name: s.name,
+        id: s.id,
+        email: s.email,
+        name: s.name,
+        provider: s.provider,
         warmup_score: s.warmup_score,
         warmup_sent: s.warmup_sent,
-        emails_sent: s.emails_sent_count,
+        emails_sent: s.emails_sent,
+        bounce_protection: s.bounce_protection,
         status: s.status,
-        type: s.type,
+        active_campaigns: s.active_campaign_count,
       }));
     }
 
