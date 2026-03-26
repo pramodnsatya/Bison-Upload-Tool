@@ -390,14 +390,22 @@ app.post('/clients/:id/campaigns/:cid/sequence', async (req, res) => {
       );
     } catch (_) {}
 
-    // Step 2: Create new sequence steps (include reply_to_thread for follow-ups)
-    const sequence_steps = steps.map((s, i) => ({
-      email_subject: s.subject,
-      email_body:    s.body,
-      wait_in_days:  Math.max(1, i === 0 ? 1 : (s.delay_days ?? i * 3)),
-      order:         i + 1,
-      reply_to_thread: s.reply_to_thread ?? (i > 0), // follow-ups default to reply thread
-    }));
+    // Step 2: Create new sequence steps
+    const firstSubject = steps[0]?.subject || '';
+    const sequence_steps = steps.map((s, i) => {
+      const isReply = s.reply_to_thread !== false && i > 0;
+      // EmailBison requires email_subject even for thread replies — use original subject
+      const subject = s.subject?.trim() 
+        ? s.subject 
+        : (isReply ? firstSubject : 'Follow-up');
+      return {
+        email_subject:   subject,
+        email_body:      s.body,
+        wait_in_days:    Math.max(1, i === 0 ? 1 : (s.delay_days ?? i * 3)),
+        order:           i + 1,
+        reply_to_thread: isReply,
+      };
+    });
 
     const data = await eb(req.params.id,
       `/api/campaigns/${req.params.cid}/sequence-steps`,
@@ -931,12 +939,17 @@ async function handleMcpTool(name, args) {
         await Promise.all(exArr.map(s => eb(args.client_id, `/api/campaigns/sequence-steps/${s.id}`, 'DELETE').catch(()=>{})));
       } catch(_) {}
       // Create new steps
-      const sequence_steps = args.steps.map((s, i) => ({
-        email_subject: s.subject,
-        email_body: s.body,
-        wait_in_days: Math.max(1, i === 0 ? 1 : (s.delay_days ?? i * 3)),
-        order: i + 1,
-      }));
+      const firstSubject1 = args.steps[0]?.subject || '';
+      const sequence_steps = args.steps.map((s, i) => {
+        const isReply = i > 0;
+        return {
+          email_subject: s.subject?.trim() ? s.subject : (isReply ? firstSubject1 : 'Follow-up'),
+          email_body: s.body,
+          wait_in_days: Math.max(1, i === 0 ? 1 : (s.delay_days ?? i * 3)),
+          order: i + 1,
+          reply_to_thread: isReply,
+        };
+      });
       await eb(args.client_id, `/api/campaigns/${args.campaign_id}/sequence-steps`, 'POST', { title: 'Main Sequence', sequence_steps });
       return { ok: true, steps_created: args.steps.length };
     }
@@ -970,7 +983,11 @@ async function handleMcpTool(name, args) {
         const exArr = ex.data || (Array.isArray(ex) ? ex : []);
         await Promise.all(exArr.map(s => eb(args.client_id, `/api/campaigns/sequence-steps/${s.id}`, 'DELETE').catch(()=>{})));
       } catch(_) {}
-      const sequence_steps = steps.map((s, i) => ({ email_subject: s.subject, email_body: s.body, wait_in_days: Math.max(1, i===0?1:s.delay_days), order: i+1 }));
+      const firstSub = steps[0]?.subject || '';
+      const sequence_steps = steps.map((s, i) => {
+        const isReply = i > 0;
+        return { email_subject: s.subject?.trim() ? s.subject : (isReply ? firstSub : 'Follow-up'), email_body: s.body, wait_in_days: Math.max(1, i===0?1:s.delay_days), order: i+1, reply_to_thread: isReply };
+      });
       await eb(args.client_id, `/api/campaigns/${args.target_campaign_id}/sequence-steps`, 'POST', { title: 'Main Sequence', sequence_steps });
       return { ok: true, steps_copied: steps.length };
     }
