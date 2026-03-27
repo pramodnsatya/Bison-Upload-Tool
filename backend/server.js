@@ -1024,13 +1024,14 @@ const MCP_TOOLS = [
   },
   {
     name: 'move_leads',
-    description: 'Move leads from one campaign to another. Uses native EmailBison move API — removes from source automatically. Can filter by status or limit count.',
+    description: 'Move ALL leads (or filtered subset) from one campaign to another in a single API call. Uses POST /api/campaigns/{id}/leads/move-to-another-campaign — removes from source automatically.',
     inputSchema: { type:'object', properties: {
       client_id: { type:'string', description:'Client ID' },
       source_campaign_id: { type:'string', description:'Campaign to move leads FROM' },
       target_campaign_id: { type:'string', description:'Campaign to move leads TO' },
       limit: { type:'number', description:'Max number of leads to move (default: all)' },
-      status_filter: { type:'string', description:'Only move leads with this status (e.g. pending, contacted, replied). Default: all.' },
+      status_filter: { type:'string', description:'Only move leads matching this lead_campaign_data.status (e.g. in_sequence, sequence_finished, replied, never_contacted). Default: all.' },
+      include_bounced: { type:'boolean', description:'Include bounced and unsubscribed leads in the move (default: false)' },
     }, required:['client_id','source_campaign_id','target_campaign_id'] },
   },
 
@@ -2159,8 +2160,8 @@ async function handleMcpTool(name, args) {
     }
 
     case 'move_leads': {
-      // Step 1: Fetch all leads from source (paginated)
-      const first = await eb(args.client_id, `/api/campaigns/${args.source_campaign_id}/leads?page=1&per_page=100`);
+      // Step 1: Fetch ALL leads from source (paginated, 15/page since per_page is ignored by API)
+      const first = await eb(args.client_id, `/api/campaigns/${args.source_campaign_id}/leads?page=1`);
       let allLeads = first.data || [];
       const lastPage = first.meta?.last_page || 1;
       if (lastPage > 1) {
@@ -2176,33 +2177,18 @@ async function handleMcpTool(name, args) {
 
       const leadIds = allLeads.map(l => l.id);
 
-      // Step 2: Use native "Move leads to another campaign" API endpoint
-      let moveResult;
-      try {
-        moveResult = await eb(args.client_id,
-          `/api/campaigns/${args.source_campaign_id}/leads/move`,
-          'POST',
-          { campaign_id: parseInt(args.target_campaign_id), lead_ids: leadIds }
-        );
-      } catch(_) {
-        // Fallback: try alternate endpoint format
-        try {
-          moveResult = await eb(args.client_id,
-            `/api/campaigns/${args.source_campaign_id}/move-leads`,
-            'POST',
-            { target_campaign_id: parseInt(args.target_campaign_id), lead_ids: leadIds }
-          );
-        } catch(_2) {
-          // Last resort: add to target then delete from source
-          const mapped = allLeads.map(l => ({ email:l.email, first_name:l.first_name||'', last_name:l.last_name||'', company_name:l.company_name||'' }));
-          await eb(args.client_id, `/api/campaigns/${args.target_campaign_id}/leads`, 'POST', { leads: mapped });
-          try {
-            await eb(args.client_id, `/api/campaigns/${args.source_campaign_id}/leads`, 'DELETE', { lead_ids: leadIds });
-          } catch(_3) {}
-          return { ok:true, moved:allLeads.length, method:'fallback', note:'Added to target. Delete from source may need manual confirmation.' };
+      // Step 2: Correct endpoint from API spec:
+      // POST /api/campaigns/{id}/leads/move-to-another-campaign
+      const moveResult = await eb(args.client_id,
+        `/api/campaigns/${args.source_campaign_id}/leads/move-to-another-campaign`,
+        'POST',
+        {
+          target_campaign_id: parseInt(args.target_campaign_id),
+          lead_ids: leadIds,
+          include_bounced_and_unsubscribed: args.include_bounced || false,
         }
-      }
-      return { ok:true, moved:allLeads.length, result: moveResult };
+      );
+      return { ok:true, moved: leadIds.length, result: moveResult };
     }
 
     case 'remove_leads': {
