@@ -828,7 +828,7 @@ const MCP_TOOLS = [
   },
   {
     name: 'apply_sequence',
-    description: 'Set the email sequence for a campaign (replaces existing steps)',
+    description: 'Set the full email sequence for a campaign (replaces all existing steps). Supports thread reply per step and split variants (A/B testing with different subject/body).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -836,13 +836,26 @@ const MCP_TOOLS = [
         campaign_id: { type: 'string', description: 'Campaign numeric ID' },
         steps: {
           type: 'array',
-          description: 'Email steps',
+          description: 'Email steps. Each step can have variants for A/B split testing.',
           items: {
             type: 'object',
             properties: {
-              subject: { type: 'string' },
-              body: { type: 'string' },
-              delay_days: { type: 'number', description: 'Days after previous email (min 1)' },
+              subject: { type: 'string', description: 'Email subject line' },
+              body: { type: 'string', description: 'Email body' },
+              delay_days: { type: 'number', description: 'Days to wait before sending (min 1). Step 1 is always 1.' },
+              thread_reply: { type: 'boolean', description: 'Send as reply in same thread as previous email. Default: true for follow-ups, false for step 1.' },
+              variants: {
+                type: 'array',
+                description: 'Optional A/B split variants for this step. Each variant has its own subject and body.',
+                items: {
+                  type: 'object',
+                  properties: {
+                    subject: { type: 'string', description: 'Variant subject line' },
+                    body: { type: 'string', description: 'Variant email body' },
+                  },
+                  required: ['subject', 'body'],
+                },
+              },
             },
             required: ['subject', 'body'],
           },
@@ -1832,6 +1845,33 @@ const MCP_TOOLS = [
     }, required:['client_id','campaign_id'] },
   },
 
+  {
+    name: 'add_sequence_step',
+    description: 'Add a single new step to an existing campaign sequence without replacing the whole sequence. Use this to append a follow-up email.',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      campaign_id: { type:'string', description:'Campaign numeric ID' },
+      subject: { type:'string', description:'Email subject line' },
+      body: { type:'string', description:'Email body' },
+      delay_days: { type:'number', description:'Days to wait before sending this step (min 1)' },
+      thread_reply: { type:'boolean', description:'Send as reply in same thread. Default: true for follow-ups.' },
+      order: { type:'number', description:'Position in sequence (1-based). If omitted, appends to end.' },
+    }, required:['client_id','campaign_id','subject','body'] },
+  },
+  {
+    name: 'add_sequence_variant',
+    description: 'Add an A/B split variant to an existing sequence step. The variant will have a different subject and/or body than the original step.',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      campaign_id: { type:'string', description:'Campaign numeric ID' },
+      step_id: { type:'number', description:'ID of the existing sequence step to create a variant of' },
+      subject: { type:'string', description:'Variant email subject' },
+      body: { type:'string', description:'Variant email body' },
+      delay_days: { type:'number', description:'Days to wait (should match parent step)' },
+      thread_reply: { type:'boolean', description:'Send as thread reply (should match parent step)' },
+    }, required:['client_id','campaign_id','step_id','subject','body'] },
+  },
+
   // ── Passthrough tools — direct access to any EmailBison API endpoint ──────
   {
     name: 'eb_get',
@@ -1979,24 +2019,42 @@ async function handleMcpTool(name, args) {
     case 'apply_sequence': {
       // Delete existing steps first
       try {
-        const ex = await eb(args.client_id, `/api/campaigns/${args.campaign_id}/sequence-steps?per_page=20`);
+        const ex = await eb(args.client_id, `/api/campaigns/${args.campaign_id}/sequence-steps`);
         const exArr = ex.data || (Array.isArray(ex) ? ex : []);
         await Promise.all(exArr.map(s => eb(args.client_id, `/api/campaigns/sequence-steps/${s.id}`, 'DELETE').catch(()=>{})));
       } catch(_) {}
-      // Create new steps
+      // Build sequence steps — supports thread_reply per step and split variants
       const firstSubject1 = args.steps[0]?.subject || '';
-      const sequence_steps = args.steps.map((s, i) => {
-        const isReply = i > 0;
-        return {
-          email_subject: s.subject?.trim() ? s.subject : (isReply ? firstSubject1 : 'Follow-up'),
+      const sequence_steps = [];
+      args.steps.forEach((s, i) => {
+        const defaultThreadReply = i > 0; // follow-ups default to thread reply
+        const threadReply = s.thread_reply !== undefined ? s.thread_reply : defaultThreadReply;
+        // Main step
+        sequence_steps.push({
+          email_subject: s.subject?.trim() ? s.subject : (i > 0 ? firstSubject1 : 'Follow-up'),
           email_body: s.body,
           wait_in_days: Math.max(1, i === 0 ? 1 : (s.delay_days ?? i * 3)),
           order: i + 1,
-          reply_to_thread: isReply,
-        };
+          reply_to_thread: threadReply,
+          variant: false,
+        });
+        // Split variants for this step (A/B testing)
+        if (s.variants?.length) {
+          s.variants.forEach(v => {
+            sequence_steps.push({
+              email_subject: v.subject,
+              email_body: v.body,
+              wait_in_days: Math.max(1, i === 0 ? 1 : (s.delay_days ?? i * 3)),
+              order: i + 1,
+              reply_to_thread: threadReply,
+              variant: true,
+              variant_from_step: i + 1, // links variant to the parent step by order number
+            });
+          });
+        }
       });
       await eb(args.client_id, `/api/campaigns/${args.campaign_id}/sequence-steps`, 'POST', { title: 'Main Sequence', sequence_steps });
-      return { ok: true, steps_created: args.steps.length };
+      return { ok: true, steps_created: args.steps.length, total_including_variants: sequence_steps.length };
     }
 
     case 'assign_senders': {
@@ -2608,6 +2666,44 @@ async function handleMcpTool(name, args) {
     case 'get_campaign_sending_schedule': {
       const day = args.day || 'today';
       return await eb(args.client_id, `/api/campaigns/${args.campaign_id}/sending-schedule`, 'GET', { day: day });
+    }
+
+    case 'add_sequence_step': {
+      // Fetch existing steps to determine order if not specified
+      const ex = await eb(args.client_id, `/api/campaigns/${args.campaign_id}/sequence-steps`);
+      const exArr = ex.data || (Array.isArray(ex) ? ex : []);
+      const nextOrder = args.order || (exArr.length > 0 ? Math.max(...exArr.map(s => s.order || 0)) + 1 : 1);
+      const isFollowup = nextOrder > 1;
+      const threadReply = args.thread_reply !== undefined ? args.thread_reply : isFollowup;
+      const sequence_steps = [{
+        email_subject: args.subject,
+        email_body: args.body,
+        wait_in_days: Math.max(1, args.delay_days || 1),
+        order: nextOrder,
+        reply_to_thread: threadReply,
+        variant: false,
+      }];
+      const result = await eb(args.client_id, `/api/campaigns/${args.campaign_id}/sequence-steps`, 'POST', { title: 'Main Sequence', sequence_steps });
+      return { ok: true, order: nextOrder, thread_reply: threadReply, result };
+    }
+
+    case 'add_sequence_variant': {
+      // Get parent step details to match delay_days and order
+      const ex = await eb(args.client_id, `/api/campaigns/${args.campaign_id}/sequence-steps`);
+      const exArr = ex.data || (Array.isArray(ex) ? ex : []);
+      const parentStep = exArr.find(s => s.id === args.step_id);
+      if (!parentStep) return { ok: false, error: `Step ID ${args.step_id} not found in campaign` };
+      const sequence_steps = [{
+        email_subject: args.subject,
+        email_body: args.body,
+        wait_in_days: args.delay_days || parentStep.wait_in_days || 1,
+        order: parentStep.order,
+        reply_to_thread: args.thread_reply !== undefined ? args.thread_reply : parentStep.thread_reply,
+        variant: true,
+        variant_from_step_id: args.step_id, // link to parent step by ID
+      }];
+      const result = await eb(args.client_id, `/api/campaigns/${args.campaign_id}/sequence-steps`, 'POST', { title: 'Main Sequence', sequence_steps });
+      return { ok: true, variant_of_step_id: args.step_id, result };
     }
 
     // ── Passthrough tools ───────────────────────────────────────────────────
