@@ -1002,6 +1002,57 @@ const MCP_TOOLS = [
       required: ['client_id', 'campaign_ids'],
     },
   },
+  // ── Passthrough tools — direct access to any EmailBison API endpoint ──────
+  {
+    name: 'eb_get',
+    description: 'Make any GET request to the EmailBison API. Use this for any operation not covered by the specific tools above. Example endpoints: /api/campaigns, /api/sender-emails, /api/campaigns/{id}/leads, /api/campaigns/{id}/statistics',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client ID (e.g. soona, kastle, dagster, adaptional, epsilon3, arist, sunset, upwind, wisprflow, founderled)' },
+        endpoint: { type: 'string', description: 'EmailBison API endpoint path, e.g. /api/campaigns?per_page=50 or /api/campaigns/791/leads' },
+      },
+      required: ['client_id', 'endpoint'],
+    },
+  },
+  {
+    name: 'eb_post',
+    description: 'Make any POST request to the EmailBison API. Use for creating resources or triggering actions. Example: POST /api/campaigns to create a campaign, POST /api/campaigns/{id}/pause to pause it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client ID' },
+        endpoint: { type: 'string', description: 'EmailBison API endpoint path, e.g. /api/campaigns/{id}/pause' },
+        body: { type: 'object', description: 'Request body as JSON object' },
+      },
+      required: ['client_id', 'endpoint'],
+    },
+  },
+  {
+    name: 'eb_patch',
+    description: 'Make any PATCH request to the EmailBison API. Use for updating existing resources. Example: PATCH /api/campaigns/{id}/update to change campaign settings.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client ID' },
+        endpoint: { type: 'string', description: 'EmailBison API endpoint path' },
+        body: { type: 'object', description: 'Fields to update as JSON object' },
+      },
+      required: ['client_id', 'endpoint'],
+    },
+  },
+  {
+    name: 'eb_delete',
+    description: 'Make any DELETE request to the EmailBison API. Use for removing resources. Example: DELETE /api/campaigns/sequence-steps/{id} to delete a sequence step.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client ID' },
+        endpoint: { type: 'string', description: 'EmailBison API endpoint path' },
+      },
+      required: ['client_id', 'endpoint'],
+    },
+  },
 ];
 
 async function handleMcpTool(name, args) {
@@ -1256,6 +1307,24 @@ async function handleMcpTool(name, args) {
         unique_only: r.senders.filter(s => emailMap[s.email].length === 1).map(s => s.email),
       }));
       return { shared_senders: shared, shared_count: shared.length, per_campaign: unique };
+    }
+
+    // ── Passthrough tools ───────────────────────────────────────────────────
+    case 'eb_get': {
+      const data = await eb(args.client_id, args.endpoint);
+      return data;
+    }
+    case 'eb_post': {
+      const data = await eb(args.client_id, args.endpoint, 'POST', args.body || {});
+      return data;
+    }
+    case 'eb_patch': {
+      const data = await eb(args.client_id, args.endpoint, 'PATCH', args.body || {});
+      return data;
+    }
+    case 'eb_delete': {
+      const data = await eb(args.client_id, args.endpoint, 'DELETE');
+      return data;
     }
 
     default:
