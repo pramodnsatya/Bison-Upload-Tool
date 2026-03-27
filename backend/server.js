@@ -279,15 +279,21 @@ app.post('/clients/:id/campaigns', async (req, res) => {
     // Step 2: Update settings via confirmed PATCH /api/campaigns/{id}/update endpoint
     try {
       await eb(req.params.id, `/api/campaigns/${id}/update`, 'PATCH', {
-        plain_text:  true,
-        track_opens: false,
-        track_clicks: false,
+        plain_text: true,
+        open_tracking: false,
+        can_unsubscribe: false,
+        include_auto_replies_in_stats: true,
+        max_emails_per_day: 1000,
+        max_new_leads_per_day: 1000,
+        sequence_prioritization: 'followups',
       });
     } catch (_) {
       // Fallback: try plain PATCH on the campaign
       try {
         await eb(req.params.id, `/api/campaigns/${id}`, 'PATCH', {
-          plain_text: true, track_opens: false, track_clicks: false,
+          plain_text: true, open_tracking: false, can_unsubscribe: false,
+          include_auto_replies_in_stats: true, max_emails_per_day: 1000,
+          max_new_leads_per_day: 1000, sequence_prioritization: 'followups',
         });
       } catch (_) {}
     }
@@ -2083,8 +2089,16 @@ async function handleMcpTool(name, args) {
       try { await eb(args.client_id, `/api/campaigns/${args.campaign_id}/schedule`, 'POST', schedulePayload); } catch(_) {
         try { await eb(args.client_id, `/api/campaigns/${args.campaign_id}/schedule`, 'PUT', schedulePayload); } catch(_) {}
       }
-      try { await eb(args.client_id, `/api/campaigns/${args.campaign_id}/update`, 'PATCH', { plain_text: true, track_opens: false, track_clicks: false }); } catch(_) {}
-      return { ok: true, schedule: 'Mon-Fri 8AM-5PM ET', plain_text: true };
+      try { await eb(args.client_id, `/api/campaigns/${args.campaign_id}/update`, 'PATCH', {
+          plain_text: true,
+          open_tracking: false,
+          can_unsubscribe: false,
+          include_auto_replies_in_stats: true,
+          max_emails_per_day: 1000,
+          max_new_leads_per_day: 1000,
+          sequence_prioritization: 'followups',
+        }); } catch(_) {}
+      return { ok: true, schedule: 'Mon-Fri 8AM-5PM ET', plain_text: true, open_tracking: false, can_unsubscribe: false, include_auto_replies_in_stats: true, max_emails_per_day: 1000, max_new_leads_per_day: 1000, sequence_prioritization: 'followups' };
     }
 
     case 'copy_sequence_to_campaign': {
@@ -2147,7 +2161,15 @@ async function handleMcpTool(name, args) {
       // Auto-apply schedule + plain text
       const schedulePayload = { monday:true, tuesday:true, wednesday:true, thursday:true, friday:true, saturday:false, sunday:false, start_time:'08:00:00', end_time:'17:00:00', timezone:'America/New_York' };
       try { await eb(args.client_id, `/api/campaigns/${id}/schedule`, 'POST', schedulePayload); } catch(_) {}
-      try { await eb(args.client_id, `/api/campaigns/${id}/update`, 'PATCH', { plain_text: true, track_opens: false, track_clicks: false }); } catch(_) {}
+      try { await eb(args.client_id, `/api/campaigns/${id}/update`, 'PATCH', {
+          plain_text: true,
+          open_tracking: false,
+          can_unsubscribe: false,
+          include_auto_replies_in_stats: true,
+          max_emails_per_day: 1000,
+          max_new_leads_per_day: 1000,
+          sequence_prioritization: 'followups',
+        }); } catch(_) {}
       return { ok: true, id, name: args.name };
     }
 
