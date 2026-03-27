@@ -873,7 +873,7 @@ const MCP_TOOLS = [
   },
   {
     name: 'assign_senders',
-    description: 'Assign sender email IDs to a campaign',
+    description: 'Manually assign specific sender email IDs to a campaign. Use auto_assign_senders instead if you want the Founderled tier logic applied automatically.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -882,6 +882,36 @@ const MCP_TOOLS = [
         sender_ids: { type: 'array', items: { type: 'number' }, description: 'Array of sender email numeric IDs' },
       },
       required: ['client_id', 'campaign_id', 'sender_ids'],
+    },
+  },
+  {
+    name: 'auto_assign_senders',
+    description: `Automatically select and assign the best qualified sender emails to a campaign using Founderled tier logic.
+
+HARD DISQUALIFIERS (never assign):
+- bounce_protection = true
+- status != Connected
+
+TIER 1 (preferred — idle senders with active_campaigns = 0):
+- Seasoned (emails_sent > 0): warmup_score > 90
+- New (emails_sent = 0): warmup_score > 95 AND warmup_sent > 130 AND account age >= 14 days
+
+TIER 2 (fallback — active senders with active_campaigns > 0, no sends scheduled today):
+- Same warmup score rules as Tier 1
+
+Provider filtering: pass provider='google' to only use Google senders, 'outlook' for Outlook only, or omit for all.
+Count: pass count to limit how many senders to assign. Default assigns all qualified Tier 1, then fills with Tier 2 if needed.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client ID' },
+        campaign_id: { type: 'string', description: 'Campaign numeric ID to assign senders to' },
+        provider: { type: 'string', description: 'Filter by provider: google, outlook, or omit for all' },
+        count: { type: 'number', description: 'Max number of senders to assign. Omit for all qualified.' },
+        allow_tier2: { type: 'boolean', description: 'Whether to use Tier 2 senders if not enough Tier 1. Default: true' },
+        dry_run: { type: 'boolean', description: 'If true, returns who would be assigned without actually assigning. Useful for previewing.' },
+      },
+      required: ['client_id', 'campaign_id'],
     },
   },
   {
@@ -2079,7 +2109,145 @@ async function handleMcpTool(name, args) {
       return { ok: true, steps_created: args.steps.length, total_including_variants: sequence_steps.length };
     }
 
-    case 'assign_senders': {
+    case 'auto_assign_senders': {
+      // ── Founderled Sender Assignment Logic ──────────────────────────────
+      // Step 1: Fetch all enriched senders (warmup score, warmup_sent, emails_sent, status, bounce_protection)
+      const allSenders = await mcpFetchEnrichedSenders(args.client_id);
+
+      // Step 2: Also fetch active campaign counts per sender
+      // (mcpFetchEnrichedSenders skips campaign counting for speed — we need it here)
+      // Fetch campaigns and build sender → active campaign count map
+      const campFirst = await eb(args.client_id, '/api/campaigns?page=1');
+      let allCamps = campFirst.data || [];
+      const campLastPage = campFirst.meta?.last_page || 1;
+      if (campLastPage > 1) {
+        const pages = Array.from({length: campLastPage-1}, (_,i) => i+2);
+        const results = await Promise.all(pages.map(p => eb(args.client_id, `/api/campaigns?page=${p}`).catch(()=>({data:[]}))));
+        results.forEach(r => { allCamps = allCamps.concat(r.data||[]); });
+      }
+      const activeStatuses = ['active','launching','sending','queued','running'];
+      const activeCamps = allCamps.filter(c => activeStatuses.includes((c.status||'').toLowerCase()));
+
+      // Build sender → active campaign count
+      const senderActiveCampCount = {};
+      // Fetch senders for each active campaign in parallel (capped to avoid overloading)
+      const campSenderResults = await Promise.allSettled(
+        activeCamps.slice(0, 50).map(async camp => {
+          const r = await eb(args.client_id, `/api/campaigns/${camp.id}/sender-emails?page=1`);
+          return (r.data || []).map(s => s.id);
+        })
+      );
+      campSenderResults.forEach(r => {
+        if (r.status === 'fulfilled') {
+          r.value.forEach(id => {
+            senderActiveCampCount[id] = (senderActiveCampCount[id] || 0) + 1;
+          });
+        }
+      });
+
+      // Step 3: Get today's date to check account age
+      const today = new Date();
+
+      // Step 4: Apply hard disqualifiers and classify into Tier 1 / Tier 2
+      const tier1 = [];
+      const tier2 = [];
+      const disqualified = [];
+
+      for (const s of allSenders) {
+        // Provider filter
+        if (args.provider && args.provider !== 'all') {
+          const prov = (s.provider || s.type || '').toLowerCase();
+          const wantGoogle = args.provider === 'google';
+          const isGoogle = prov.includes('google') || prov.includes('gmail');
+          const isOutlook = prov.includes('microsoft') || prov.includes('outlook');
+          if (wantGoogle && !isGoogle) continue;
+          if (args.provider === 'outlook' && !isOutlook) continue;
+        }
+
+        // Hard disqualifiers
+        if (s.bounce_protection) { disqualified.push({id:s.id, email:s.email, reason:'bounce_protection'}); continue; }
+        const status = (s.status || '').toLowerCase();
+        if (!status.includes('connected') && status !== 'active') { disqualified.push({id:s.id, email:s.email, reason:'status_'+status}); continue; }
+
+        const activeCampCount = senderActiveCampCount[s.id] || s.active_campaign_count || 0;
+        const warmupScore = s.warmup_score || 0;
+        const warmupSent = s.warmup_sent || 0;
+        const emailsSent = s.emails_sent || 0;
+        const isSeasoned = emailsSent > 0;
+
+        // Check account age for new senders
+        let ageInDays = 999; // default assume old enough
+        if (!isSeasoned && s.created_at) {
+          const created = new Date(s.created_at);
+          ageInDays = Math.floor((today - created) / (1000 * 60 * 60 * 24));
+        }
+
+        // Determine qualification
+        let qualifies = false;
+        if (isSeasoned) {
+          qualifies = warmupScore > 90;
+        } else {
+          qualifies = warmupScore > 95 && warmupSent > 130 && ageInDays >= 14;
+        }
+
+        if (!qualifies) { disqualified.push({id:s.id, email:s.email, reason:`warmup_score_${warmupScore}_insufficient`}); continue; }
+
+        if (activeCampCount === 0) {
+          tier1.push({id:s.id, email:s.email, warmup_score:warmupScore, warmup_sent:warmupSent, emails_sent:emailsSent, active_campaigns:activeCampCount, tier:1});
+        } else {
+          tier2.push({id:s.id, email:s.email, warmup_score:warmupScore, warmup_sent:warmupSent, emails_sent:emailsSent, active_campaigns:activeCampCount, tier:2});
+        }
+      }
+
+      // Step 5: Select senders — Tier 1 first, then Tier 2 if allowed
+      const allowTier2 = args.allow_tier2 !== false;
+      let selected = [...tier1];
+      if (allowTier2) selected = selected.concat(tier2);
+
+      // Sort by warmup_score desc within each tier
+      selected.sort((a,b) => (a.tier - b.tier) || (b.warmup_score - a.warmup_score));
+
+      if (args.count) selected = selected.slice(0, args.count);
+
+      if (!selected.length) {
+        return {
+          ok: false,
+          error: 'No qualified senders found',
+          tier1_count: tier1.length,
+          tier2_count: tier2.length,
+          disqualified_count: disqualified.length,
+          disqualified_sample: disqualified.slice(0, 5),
+        };
+      }
+
+      // Step 6: Assign (or dry run)
+      if (args.dry_run) {
+        return {
+          ok: true,
+          dry_run: true,
+          would_assign: selected.length,
+          tier1_selected: selected.filter(s=>s.tier===1).length,
+          tier2_selected: selected.filter(s=>s.tier===2).length,
+          senders: selected,
+          disqualified_count: disqualified.length,
+        };
+      }
+
+      await eb(args.client_id, `/api/campaigns/${args.campaign_id}/attach-sender-emails`, 'POST', {
+        sender_email_ids: selected.map(s => s.id),
+      });
+
+      return {
+        ok: true,
+        assigned: selected.length,
+        tier1_assigned: selected.filter(s=>s.tier===1).length,
+        tier2_assigned: selected.filter(s=>s.tier===2).length,
+        senders: selected.map(s => ({id:s.id, email:s.email, warmup_score:s.warmup_score, tier:s.tier})),
+        disqualified_count: disqualified.length,
+      };
+    }
+
+        case 'assign_senders': {
       await eb(args.client_id, `/api/campaigns/${args.campaign_id}/attach-sender-emails`, 'POST', { sender_email_ids: args.sender_ids });
       return { ok: true, assigned: args.sender_ids.length };
     }
