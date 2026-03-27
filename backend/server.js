@@ -1487,6 +1487,350 @@ const MCP_TOOLS = [
     }, required:['client_id','campaign_id'] },
   },
 
+  // ── Replies (compose/reply/forward/delete/thread) ────────────────────────
+  {
+    name: 'compose_email',
+    description: 'Compose and send a brand new one-off email from a sender email account',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      sender_email_id: { type:'number', description:'Sender email ID to send from' },
+      to_emails: { type:'array', description:'Recipients [{name, email_address}]', items:{type:'object'} },
+      subject: { type:'string', description:'Email subject' },
+      message: { type:'string', description:'Email body (HTML or plain text)' },
+      content_type: { type:'string', description:'html or text (default: text)' },
+      cc_emails: { type:'array', items:{type:'object'}, description:'CC recipients [{name, email_address}]' },
+      bcc_emails: { type:'array', items:{type:'object'}, description:'BCC recipients [{name, email_address}]' },
+    }, required:['client_id','sender_email_id','to_emails','message'] },
+  },
+  {
+    name: 'reply_to_email',
+    description: 'Reply to an existing email/conversation by reply ID',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      reply_id: { type:'number', description:'ID of the reply/email to respond to' },
+      message: { type:'string', description:'Reply message body' },
+      sender_email_id: { type:'number', description:'Sender email ID (not needed if reply_all is true)' },
+      reply_all: { type:'boolean', description:'Auto-select sender and recipients from original email' },
+      content_type: { type:'string', description:'html or text' },
+      cc_emails: { type:'array', items:{type:'object'} },
+      inject_previous_email_body: { type:'boolean', description:'Include previous email body in reply' },
+    }, required:['client_id','reply_id','message'] },
+  },
+  {
+    name: 'forward_email',
+    description: 'Forward an existing email to new recipients',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      reply_id: { type:'number', description:'ID of the reply/email to forward' },
+      to_emails: { type:'array', description:'Forward recipients [{name, email_address}]', items:{type:'object'} },
+      sender_email_id: { type:'number', description:'Sender email ID to forward from' },
+      message: { type:'string', description:'Optional message to prepend' },
+    }, required:['client_id','reply_id','sender_email_id'] },
+  },
+  {
+    name: 'delete_reply',
+    description: 'Delete a reply/email by ID',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      reply_id: { type:'number', description:'Reply ID to delete' },
+    }, required:['client_id','reply_id'] },
+  },
+  {
+    name: 'get_conversation_thread',
+    description: 'Get the full conversation thread for a reply (older + newer messages)',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      reply_id: { type:'number', description:'Reply ID' },
+    }, required:['client_id','reply_id'] },
+  },
+  {
+    name: 'push_to_followup_campaign',
+    description: 'Push a reply (and its lead) into a reply-followup campaign to continue the conversation in an automated sequence',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      reply_id: { type:'number', description:'Reply ID' },
+      campaign_id: { type:'number', description:'ID of the followup campaign to push into' },
+      force_add_reply: { type:'boolean', description:'Ignore unsubscribed/bounced status and add anyway' },
+    }, required:['client_id','reply_id','campaign_id'] },
+  },
+  {
+    name: 'unsubscribe_reply_contact',
+    description: 'Unsubscribe the contact associated with a specific reply from all future emails',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      reply_id: { type:'number', description:'Reply ID' },
+    }, required:['client_id','reply_id'] },
+  },
+
+  // ── Lead extras ──────────────────────────────────────────────────────────
+  {
+    name: 'delete_lead',
+    description: 'Permanently delete a lead and all associated data (irreversible — consider unsubscribing instead)',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      lead_id: { type:'string', description:'Lead ID or email address' },
+    }, required:['client_id','lead_id'] },
+  },
+  {
+    name: 'bulk_delete_leads',
+    description: 'Permanently delete multiple leads by ID (irreversible)',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      lead_ids: { type:'array', items:{type:'number'}, description:'Array of lead IDs to delete' },
+    }, required:['client_id','lead_ids'] },
+  },
+  {
+    name: 'add_lead_to_blacklist',
+    description: 'Add a lead to the global email blacklist',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      lead_id: { type:'string', description:'Lead ID or email address' },
+    }, required:['client_id','lead_id'] },
+  },
+  {
+    name: 'get_lead_scheduled_emails',
+    description: 'Get all scheduled campaign emails for a specific lead',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      lead_id: { type:'string', description:'Lead ID or email address' },
+      page: { type:'number' },
+    }, required:['client_id','lead_id'] },
+  },
+  {
+    name: 'get_lead_sent_emails',
+    description: 'Get all sent campaign emails for a specific lead',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      lead_id: { type:'string', description:'Lead ID or email address' },
+    }, required:['client_id','lead_id'] },
+  },
+  {
+    name: 'get_lead_replies',
+    description: 'Get all replies/conversations for a specific lead',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      lead_id: { type:'string', description:'Lead ID or email address' },
+      page: { type:'number' },
+    }, required:['client_id','lead_id'] },
+  },
+  {
+    name: 'upsert_lead',
+    description: 'Update a lead if it exists, create it if not. Use patch_mode to only update passed fields.',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      email: { type:'string', description:'Lead email (used as identifier)' },
+      first_name: { type:'string' },
+      last_name: { type:'string' },
+      title: { type:'string' },
+      company: { type:'string' },
+      notes: { type:'string' },
+      custom_variables: { type:'array', items:{type:'object'} },
+      patch_mode: { type:'boolean', description:'true = only update passed fields; false = replace all' },
+    }, required:['client_id','email','first_name'] },
+  },
+
+  // ── Campaign scheduled emails ─────────────────────────────────────────────
+  {
+    name: 'get_campaign_scheduled_emails',
+    description: 'Get all scheduled emails for a specific campaign, with lead and sender details',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      campaign_id: { type:'string', description:'Campaign ID' },
+      status: { type:'string', description:'scheduled, sent, failed, paused, stopped, bounced, unsubscribed' },
+      page: { type:'number' },
+    }, required:['client_id','campaign_id'] },
+  },
+
+  // ── Sender email extras ───────────────────────────────────────────────────
+  {
+    name: 'get_sender_campaigns',
+    description: 'Get all campaigns a specific sender email account is assigned to',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      sender_email_id: { type:'number', description:'Sender email ID or email address' },
+    }, required:['client_id','sender_email_id'] },
+  },
+  {
+    name: 'get_sender_replies',
+    description: 'Get all replies received by a specific sender email account',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      sender_email_id: { type:'number', description:'Sender email ID or email address' },
+      folder: { type:'string', description:'inbox, sent, spam, bounced, all' },
+      page: { type:'number' },
+    }, required:['client_id','sender_email_id'] },
+  },
+  {
+    name: 'get_warmup_detail',
+    description: 'Get warmup details for a single sender email account for a date range',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      sender_email_id: { type:'number', description:'Sender email ID' },
+      start_date: { type:'string', description:'YYYY-MM-DD' },
+      end_date: { type:'string', description:'YYYY-MM-DD' },
+    }, required:['client_id','sender_email_id','start_date','end_date'] },
+  },
+
+  // ── Webhooks extras ───────────────────────────────────────────────────────
+  {
+    name: 'get_webhook',
+    description: 'Get details of a single webhook by ID',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      webhook_id: { type:'number', description:'Webhook ID' },
+    }, required:['client_id','webhook_id'] },
+  },
+  {
+    name: 'update_webhook',
+    description: 'Update a webhook (name, URL, or event subscriptions)',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      webhook_id: { type:'number', description:'Webhook ID' },
+      name: { type:'string' },
+      url: { type:'string' },
+      events: { type:'array', items:{type:'string'}, description:'Full list of events to subscribe to (replaces existing)' },
+    }, required:['client_id','webhook_id','name','url','events'] },
+  },
+  {
+    name: 'get_webhook_event_types',
+    description: 'Get all valid webhook event types supported by EmailBison',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+    }, required:['client_id'] },
+  },
+
+  // ── Reply templates extras ────────────────────────────────────────────────
+  {
+    name: 'get_reply_template',
+    description: 'Get details of a single reply template by ID',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      template_id: { type:'number', description:'Reply template ID' },
+    }, required:['client_id','template_id'] },
+  },
+  {
+    name: 'update_reply_template',
+    description: 'Update an existing reply template (replaces content entirely)',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      template_id: { type:'number', description:'Reply template ID' },
+      name: { type:'string', description:'Template name' },
+      body: { type:'string', description:'Template message body' },
+    }, required:['client_id','template_id','name','body'] },
+  },
+  {
+    name: 'delete_reply_template',
+    description: 'Delete a reply template permanently',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      template_id: { type:'number', description:'Reply template ID' },
+    }, required:['client_id','template_id'] },
+  },
+
+  // ── Tags extras ───────────────────────────────────────────────────────────
+  {
+    name: 'remove_tags_from_campaigns',
+    description: 'Remove/detach tags from campaigns',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      tag_ids: { type:'array', items:{type:'number'} },
+      campaign_ids: { type:'array', items:{type:'number'} },
+    }, required:['client_id','tag_ids','campaign_ids'] },
+  },
+  {
+    name: 'remove_tags_from_leads',
+    description: 'Remove/detach tags from leads',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      tag_ids: { type:'array', items:{type:'number'} },
+      lead_ids: { type:'array', items:{type:'number'} },
+    }, required:['client_id','tag_ids','lead_ids'] },
+  },
+  {
+    name: 'attach_tags_to_senders',
+    description: 'Attach tags to sender email accounts',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      tag_ids: { type:'array', items:{type:'number'} },
+      sender_email_ids: { type:'array', items:{type:'number'} },
+    }, required:['client_id','tag_ids','sender_email_ids'] },
+  },
+  {
+    name: 'remove_tags_from_senders',
+    description: 'Remove tags from sender email accounts',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      tag_ids: { type:'array', items:{type:'number'} },
+      sender_email_ids: { type:'array', items:{type:'number'} },
+    }, required:['client_id','tag_ids','sender_email_ids'] },
+  },
+  {
+    name: 'delete_tag',
+    description: 'Delete a tag from the workspace',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      tag_id: { type:'number', description:'Tag ID' },
+    }, required:['client_id','tag_id'] },
+  },
+
+  // ── Blacklist extras ──────────────────────────────────────────────────────
+  {
+    name: 'remove_blacklisted_email',
+    description: 'Remove an email address from the blacklist',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      email: { type:'string', description:'Email address or blacklist record ID' },
+    }, required:['client_id','email'] },
+  },
+  {
+    name: 'remove_blacklisted_domain',
+    description: 'Remove a domain from the blacklist',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      domain: { type:'string', description:'Domain or blacklist record ID' },
+    }, required:['client_id','domain'] },
+  },
+
+  // ── Ignore phrases extras ─────────────────────────────────────────────────
+  {
+    name: 'delete_ignore_phrase',
+    description: 'Remove an ignore phrase',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      phrase_id: { type:'string', description:'Ignore phrase ID or the phrase itself' },
+    }, required:['client_id','phrase_id'] },
+  },
+
+  // ── Campaign sequence extras ──────────────────────────────────────────────
+  {
+    name: 'activate_sequence_step',
+    description: 'Activate or deactivate a specific sequence step variant',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      sequence_step_id: { type:'number', description:'Sequence step ID' },
+      active: { type:'boolean', description:'true = activate, false = deactivate' },
+    }, required:['client_id','sequence_step_id','active'] },
+  },
+  {
+    name: 'import_leads_by_ids',
+    description: 'Import specific leads (by their global lead IDs) into a campaign',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      campaign_id: { type:'string', description:'Campaign ID' },
+      lead_ids: { type:'array', items:{type:'number'}, description:'Array of lead IDs to import' },
+      allow_parallel_sending: { type:'boolean', description:'Force add leads already in other campaigns' },
+    }, required:['client_id','campaign_id','lead_ids'] },
+  },
+  {
+    name: 'get_campaign_sending_schedule',
+    description: 'Get the sending schedule for a specific campaign (how many emails scheduled for today/tomorrow)',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      campaign_id: { type:'string', description:'Campaign ID' },
+      day: { type:'string', description:'today, tomorrow, or day_after_tomorrow (default: today)' },
+    }, required:['client_id','campaign_id'] },
+  },
+
   // ── Passthrough tools — direct access to any EmailBison API endpoint ──────
   {
     name: 'eb_get',
@@ -2098,6 +2442,165 @@ async function handleMcpTool(name, args) {
       if (args.open_tracking !== undefined) body.open_tracking = args.open_tracking;
       if (args.can_unsubscribe !== undefined) body.can_unsubscribe = args.can_unsubscribe;
       return await eb(args.client_id, `/api/campaigns/${args.campaign_id}/update`, 'PATCH', body);
+    }
+
+    // ── Replies (compose/reply/forward/delete/thread) ──────────────────────
+    case 'compose_email': {
+      const body = { sender_email_id: args.sender_email_id, to_emails: args.to_emails, message: args.message };
+      if (args.subject) body.subject = args.subject;
+      if (args.content_type) body.content_type = args.content_type;
+      if (args.cc_emails) body.cc_emails = args.cc_emails;
+      if (args.bcc_emails) body.bcc_emails = args.bcc_emails;
+      return await eb(args.client_id, '/api/replies/new', 'POST', body);
+    }
+    case 'reply_to_email': {
+      const body = { message: args.message };
+      if (args.sender_email_id) body.sender_email_id = args.sender_email_id;
+      if (args.reply_all !== undefined) body.reply_all = args.reply_all;
+      if (args.content_type) body.content_type = args.content_type;
+      if (args.cc_emails) body.cc_emails = args.cc_emails;
+      if (args.inject_previous_email_body !== undefined) body.inject_previous_email_body = args.inject_previous_email_body;
+      return await eb(args.client_id, `/api/replies/${args.reply_id}/reply`, 'POST', body);
+    }
+    case 'forward_email': {
+      const body = { sender_email_id: args.sender_email_id };
+      if (args.to_emails) body.to_emails = args.to_emails;
+      if (args.message) body.message = args.message;
+      return await eb(args.client_id, `/api/replies/${args.reply_id}/forward`, 'POST', body);
+    }
+    case 'delete_reply': {
+      return await eb(args.client_id, `/api/replies/${args.reply_id}`, 'DELETE');
+    }
+    case 'get_conversation_thread': {
+      return await eb(args.client_id, `/api/replies/${args.reply_id}/conversation-thread`);
+    }
+    case 'push_to_followup_campaign': {
+      const body = { campaign_id: args.campaign_id };
+      if (args.force_add_reply !== undefined) body.force_add_reply = args.force_add_reply;
+      return await eb(args.client_id, `/api/replies/${args.reply_id}/followup-campaign/push`, 'POST', body);
+    }
+    case 'unsubscribe_reply_contact': {
+      return await eb(args.client_id, `/api/replies/${args.reply_id}/unsubscribe`, 'PATCH', {});
+    }
+
+    // ── Lead extras ────────────────────────────────────────────────────────
+    case 'delete_lead': {
+      return await eb(args.client_id, `/api/leads/${args.lead_id}`, 'DELETE');
+    }
+    case 'bulk_delete_leads': {
+      return await eb(args.client_id, '/api/leads/bulk', 'DELETE', { lead_ids: args.lead_ids });
+    }
+    case 'add_lead_to_blacklist': {
+      return await eb(args.client_id, `/api/leads/${args.lead_id}/blacklist`, 'POST', {});
+    }
+    case 'get_lead_scheduled_emails': {
+      const p = args.page ? `?page=${args.page}` : '';
+      return await eb(args.client_id, `/api/leads/${args.lead_id}/scheduled-emails${p}`);
+    }
+    case 'get_lead_sent_emails': {
+      return await eb(args.client_id, `/api/leads/${args.lead_id}/sent-emails`);
+    }
+    case 'get_lead_replies': {
+      const p = args.page ? `?page=${args.page}` : '';
+      return await eb(args.client_id, `/api/leads/${args.lead_id}/replies${p}`);
+    }
+    case 'upsert_lead': {
+      const behavior = args.patch_mode ? 'patch' : 'put';
+      const body = { first_name: args.first_name, email: args.email, existing_lead_behavior: behavior };
+      if (args.last_name) body.last_name = args.last_name;
+      if (args.title) body.title = args.title;
+      if (args.company) body.company = args.company;
+      if (args.notes) body.notes = args.notes;
+      if (args.custom_variables) body.custom_variables = args.custom_variables;
+      return await eb(args.client_id, `/api/leads/create-or-update/${encodeURIComponent(args.email)}`, 'POST', body);
+    }
+
+    // ── Campaign scheduled emails ─────────────────────────────────────────
+    case 'get_campaign_scheduled_emails': {
+      const params = new URLSearchParams();
+      if (args.status) params.set('status', args.status);
+      if (args.page) params.set('page', args.page);
+      return await eb(args.client_id, `/api/campaigns/${args.campaign_id}/scheduled-emails?${params.toString()}`);
+    }
+
+    // ── Sender email extras ───────────────────────────────────────────────
+    case 'get_sender_campaigns': {
+      return await eb(args.client_id, `/api/sender-emails/${args.sender_email_id}/campaigns`);
+    }
+    case 'get_sender_replies': {
+      const params = new URLSearchParams();
+      if (args.folder) params.set('folder', args.folder);
+      if (args.page) params.set('page', args.page);
+      return await eb(args.client_id, `/api/sender-emails/${args.sender_email_id}/replies?${params.toString()}`);
+    }
+    case 'get_warmup_detail': {
+      return await eb(args.client_id, `/api/warmup/sender-emails/${args.sender_email_id}?start_date=${args.start_date}&end_date=${args.end_date}`);
+    }
+
+    // ── Webhooks extras ───────────────────────────────────────────────────
+    case 'get_webhook': {
+      return await eb(args.client_id, `/api/webhook-url/${args.webhook_id}`);
+    }
+    case 'update_webhook': {
+      return await eb(args.client_id, `/api/webhook-url/${args.webhook_id}`, 'PUT', { name: args.name, url: args.url, events: args.events });
+    }
+    case 'get_webhook_event_types': {
+      return await eb(args.client_id, '/api/webhook-events/event-types');
+    }
+
+    // ── Reply templates extras ────────────────────────────────────────────
+    case 'get_reply_template': {
+      return await eb(args.client_id, `/api/reply-templates/${args.template_id}`);
+    }
+    case 'update_reply_template': {
+      return await eb(args.client_id, `/api/reply-templates/${args.template_id}`, 'PUT', { name: args.name, body: args.body });
+    }
+    case 'delete_reply_template': {
+      return await eb(args.client_id, `/api/reply-templates/${args.template_id}`, 'DELETE');
+    }
+
+    // ── Tags extras ───────────────────────────────────────────────────────
+    case 'remove_tags_from_campaigns': {
+      return await eb(args.client_id, '/api/tags/remove-from-campaigns', 'POST', { tag_ids: args.tag_ids, campaign_ids: args.campaign_ids });
+    }
+    case 'remove_tags_from_leads': {
+      return await eb(args.client_id, '/api/tags/remove-from-leads', 'POST', { tag_ids: args.tag_ids, lead_ids: args.lead_ids });
+    }
+    case 'attach_tags_to_senders': {
+      return await eb(args.client_id, '/api/tags/attach-to-sender-emails', 'POST', { tag_ids: args.tag_ids, sender_email_ids: args.sender_email_ids });
+    }
+    case 'remove_tags_from_senders': {
+      return await eb(args.client_id, '/api/tags/remove-from-sender-emails', 'POST', { tag_ids: args.tag_ids, sender_email_ids: args.sender_email_ids });
+    }
+    case 'delete_tag': {
+      return await eb(args.client_id, `/api/tags/${args.tag_id}`, 'DELETE');
+    }
+
+    // ── Blacklist extras ──────────────────────────────────────────────────
+    case 'remove_blacklisted_email': {
+      return await eb(args.client_id, `/api/blacklisted-emails/${encodeURIComponent(args.email)}`, 'DELETE');
+    }
+    case 'remove_blacklisted_domain': {
+      return await eb(args.client_id, `/api/blacklisted-domains/${encodeURIComponent(args.domain)}`, 'DELETE');
+    }
+
+    // ── Ignore phrases extras ─────────────────────────────────────────────
+    case 'delete_ignore_phrase': {
+      return await eb(args.client_id, `/api/ignore-phrases/${encodeURIComponent(args.phrase_id)}`, 'DELETE');
+    }
+
+    // ── Campaign sequence extras ──────────────────────────────────────────
+    case 'activate_sequence_step': {
+      return await eb(args.client_id, `/api/campaigns/sequence-steps/${args.sequence_step_id}/activate-or-deactivate`, 'PATCH', { active: args.active });
+    }
+    case 'import_leads_by_ids': {
+      const body = { lead_ids: args.lead_ids };
+      if (args.allow_parallel_sending !== undefined) body.allow_parallel_sending = args.allow_parallel_sending;
+      return await eb(args.client_id, `/api/campaigns/${args.campaign_id}/leads/attach-leads`, 'POST', body);
+    }
+    case 'get_campaign_sending_schedule': {
+      const day = args.day || 'today';
+      return await eb(args.client_id, `/api/campaigns/${args.campaign_id}/sending-schedule`, 'GET', { day });
     }
 
     // ── Passthrough tools ───────────────────────────────────────────────────
