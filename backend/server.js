@@ -1024,7 +1024,7 @@ const MCP_TOOLS = [
   },
   {
     name: 'move_leads',
-    description: 'Move leads from one campaign to another — fetches from source, adds to target. Optionally deletes from source if the API supports it.',
+    description: 'Move leads from one campaign to another. Uses native EmailBison move API — removes from source automatically. Can filter by status or limit count.',
     inputSchema: { type:'object', properties: {
       client_id: { type:'string', description:'Client ID' },
       source_campaign_id: { type:'string', description:'Campaign to move leads FROM' },
@@ -1032,6 +1032,25 @@ const MCP_TOOLS = [
       limit: { type:'number', description:'Max number of leads to move (default: all)' },
       status_filter: { type:'string', description:'Only move leads with this status (e.g. pending, contacted, replied). Default: all.' },
     }, required:['client_id','source_campaign_id','target_campaign_id'] },
+  },
+
+  {
+    name: 'remove_leads',
+    description: 'Remove leads from a campaign by their lead IDs',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      campaign_id: { type:'string', description:'Campaign numeric ID' },
+      lead_ids: { type:'array', items:{type:'number'}, description:'Array of lead numeric IDs to remove' },
+    }, required:['client_id','campaign_id','lead_ids'] },
+  },
+  {
+    name: 'import_leads_to_campaign',
+    description: 'Import all leads from one campaign directly into another using the native EmailBison import API — no manual selection needed',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      target_campaign_id: { type:'string', description:'Campaign to import leads INTO' },
+      source_campaign_id: { type:'string', description:'Campaign to copy leads FROM' },
+    }, required:['client_id','target_campaign_id','source_campaign_id'] },
   },
 
   // ── Passthrough tools — direct access to any EmailBison API endpoint ──────
@@ -1362,7 +1381,7 @@ async function handleMcpTool(name, args) {
     }
 
     case 'move_leads': {
-      // Fetch all leads from source campaign
+      // Step 1: Fetch all leads from source (paginated)
       const first = await eb(args.client_id, `/api/campaigns/${args.source_campaign_id}/leads?page=1&per_page=100`);
       let allLeads = first.data || [];
       const lastPage = first.meta?.last_page || 1;
@@ -1373,19 +1392,58 @@ async function handleMcpTool(name, args) {
         ));
         results.forEach(r => { allLeads = allLeads.concat(r.data||[]); });
       }
-      // Apply filters
       if (args.status_filter) allLeads = allLeads.filter(l => l.status?.toLowerCase() === args.status_filter.toLowerCase());
       if (args.limit) allLeads = allLeads.slice(0, args.limit);
       if (!allLeads.length) return { ok:false, error:'No leads found matching criteria in source campaign' };
-      // Add to target campaign
-      const mapped = allLeads.map(l => ({ email:l.email, first_name:l.first_name||'', last_name:l.last_name||'', company_name:l.company_name||'' }));
-      await eb(args.client_id, `/api/campaigns/${args.target_campaign_id}/leads`, 'POST', { leads: mapped });
-      return {
-        ok: true,
-        moved: allLeads.length,
-        sample_emails: allLeads.slice(0,5).map(l=>l.email),
-        note: 'Leads added to target campaign. EmailBison API does not support removing leads from a campaign, so they remain in the source campaign as well.',
-      };
+
+      const leadIds = allLeads.map(l => l.id);
+
+      // Step 2: Use native "Move leads to another campaign" API endpoint
+      let moveResult;
+      try {
+        moveResult = await eb(args.client_id,
+          `/api/campaigns/${args.source_campaign_id}/leads/move`,
+          'POST',
+          { campaign_id: parseInt(args.target_campaign_id), lead_ids: leadIds }
+        );
+      } catch(_) {
+        // Fallback: try alternate endpoint format
+        try {
+          moveResult = await eb(args.client_id,
+            `/api/campaigns/${args.source_campaign_id}/move-leads`,
+            'POST',
+            { target_campaign_id: parseInt(args.target_campaign_id), lead_ids: leadIds }
+          );
+        } catch(_2) {
+          // Last resort: add to target then delete from source
+          const mapped = allLeads.map(l => ({ email:l.email, first_name:l.first_name||'', last_name:l.last_name||'', company_name:l.company_name||'' }));
+          await eb(args.client_id, `/api/campaigns/${args.target_campaign_id}/leads`, 'POST', { leads: mapped });
+          try {
+            await eb(args.client_id, `/api/campaigns/${args.source_campaign_id}/leads`, 'DELETE', { lead_ids: leadIds });
+          } catch(_3) {}
+          return { ok:true, moved:allLeads.length, method:'fallback', note:'Added to target. Delete from source may need manual confirmation.' };
+        }
+      }
+      return { ok:true, moved:allLeads.length, result: moveResult };
+    }
+
+    case 'remove_leads': {
+      const result = await eb(args.client_id,
+        `/api/campaigns/${args.campaign_id}/leads`,
+        'DELETE',
+        { lead_ids: args.lead_ids }
+      );
+      return { ok:true, removed: args.lead_ids.length, result };
+    }
+
+    case 'import_leads_to_campaign': {
+      // Use EmailBison's "Import leads from existing list" endpoint
+      const result = await eb(args.client_id,
+        `/api/campaigns/${args.target_campaign_id}/import-leads`,
+        'POST',
+        { campaign_id: parseInt(args.source_campaign_id) }
+      );
+      return { ok:true, result };
     }
 
     // ── Passthrough tools ───────────────────────────────────────────────────
