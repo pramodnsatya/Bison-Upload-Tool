@@ -1994,14 +1994,19 @@ async function handleMcpTool(name, args) {
     }
 
     case 'get_campaign_sequence': {
-      const data = await eb(args.client_id, `/api/campaigns/${args.campaign_id}/sequence-steps?per_page=20`);
+      const data = await eb(args.client_id, `/api/campaigns/${args.campaign_id}/sequence-steps`);
       const arr = Array.isArray(data) ? data : (data.data || []);
-      return arr.map(s => ({
-        id: s.id, order: s.order,
+      return arr.sort((a,b) => (a.order - b.order) || (a.id - b.id)).map(s => ({
+        id: s.id,
+        order: s.order,
         subject: s.email_subject || s.subject,
         body: s.email_body || s.body,
         delay_days: s.wait_in_days || s.delay_days,
-      })).sort((a,b) => a.order - b.order);
+        thread_reply: s.reply_to_thread ?? s.thread_reply ?? false,
+        is_variant: s.variant ?? false,
+        variant_of_step_id: s.variant_from_step_id || null,
+        active: s.active ?? true,
+      }));
     }
 
     case 'get_campaign_senders': {
@@ -2072,27 +2077,32 @@ async function handleMcpTool(name, args) {
     }
 
     case 'copy_sequence_to_campaign': {
-      const data = await eb(args.client_id, `/api/campaigns/${args.source_campaign_id}/sequence-steps?per_page=20`);
+      // Fetch source steps preserving ALL fields: thread_reply, variant, order
+      const data = await eb(args.client_id, `/api/campaigns/${args.source_campaign_id}/sequence-steps`);
       const arr = Array.isArray(data) ? data : (data.data || []);
-      const steps = arr.sort((a,b) => a.order - b.order).map(s => ({
-        subject: s.email_subject || s.subject || '',
-        body: s.email_body || s.body || '',
-        delay_days: Math.max(1, s.wait_in_days || s.delay_days || 1),
-      }));
-      if (!steps.length) throw new Error('Source campaign has no sequence steps');
-      // Delete existing in target
+      if (!arr.length) throw new Error('Source campaign has no sequence steps');
+      // Sort: non-variants first, then variants, within same order
+      const sorted = arr.sort((a,b) => (a.order - b.order) || (a.variant ? 1 : -1));
+      // Delete existing steps in target
       try {
-        const ex = await eb(args.client_id, `/api/campaigns/${args.target_campaign_id}/sequence-steps?per_page=20`);
+        const ex = await eb(args.client_id, `/api/campaigns/${args.target_campaign_id}/sequence-steps`);
         const exArr = ex.data || (Array.isArray(ex) ? ex : []);
         await Promise.all(exArr.map(s => eb(args.client_id, `/api/campaigns/sequence-steps/${s.id}`, 'DELETE').catch(()=>{})));
       } catch(_) {}
-      const firstSub = steps[0]?.subject || '';
-      const sequence_steps = steps.map((s, i) => {
-        const isReply = i > 0;
-        return { email_subject: s.subject?.trim() ? s.subject : (isReply ? firstSub : 'Follow-up'), email_body: s.body, wait_in_days: Math.max(1, i===0?1:s.delay_days), order: i+1, reply_to_thread: isReply };
-      });
+      // Rebuild: main steps first, variants linked by order number
+      const sequence_steps = sorted.map(s => ({
+        email_subject: s.email_subject || s.subject || '',
+        email_body: s.email_body || s.body || '',
+        wait_in_days: Math.max(1, s.wait_in_days || 1),
+        order: s.order,
+        reply_to_thread: s.reply_to_thread ?? s.thread_reply ?? (s.order > 1),
+        variant: s.variant ?? false,
+        ...(s.variant && s.variant_from_step_id ? { variant_from_step: sorted.find(p => p.id === s.variant_from_step_id && !p.variant)?.order || s.order } : {}),
+      }));
       await eb(args.client_id, `/api/campaigns/${args.target_campaign_id}/sequence-steps`, 'POST', { title: 'Main Sequence', sequence_steps });
-      return { ok: true, steps_copied: steps.length };
+      const mainSteps = sequence_steps.filter(s => !s.variant).length;
+      const variants = sequence_steps.filter(s => s.variant).length;
+      return { ok: true, steps_copied: mainSteps, variants_copied: variants };
     }
 
     case 'search_campaigns': {
@@ -2672,7 +2682,9 @@ async function handleMcpTool(name, args) {
       // Fetch existing steps to determine order if not specified
       const ex = await eb(args.client_id, `/api/campaigns/${args.campaign_id}/sequence-steps`);
       const exArr = ex.data || (Array.isArray(ex) ? ex : []);
-      const nextOrder = args.order || (exArr.length > 0 ? Math.max(...exArr.map(s => s.order || 0)) + 1 : 1);
+      // Find max order across ALL steps including variants (variants share order with parent)
+      const nonVariants = exArr.filter(s => !s.variant);
+      const nextOrder = args.order || (nonVariants.length > 0 ? Math.max(...nonVariants.map(s => s.order || 0)) + 1 : 1);
       const isFollowup = nextOrder > 1;
       const threadReply = args.thread_reply !== undefined ? args.thread_reply : isFollowup;
       const sequence_steps = [{
