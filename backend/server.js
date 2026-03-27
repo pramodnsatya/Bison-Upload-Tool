@@ -901,6 +901,107 @@ const MCP_TOOLS = [
       required: ['client_id'],
     },
   },
+  {
+    name: 'get_campaign_leads',
+    description: 'Get leads from a campaign with their email status',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client ID' },
+        campaign_id: { type: 'string', description: 'Campaign numeric ID' },
+        page: { type: 'number', description: 'Page number (default 1)' },
+      },
+      required: ['client_id', 'campaign_id'],
+    },
+  },
+  {
+    name: 'create_campaign',
+    description: 'Create a new draft campaign with schedule and plain text settings applied automatically',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client ID' },
+        name: { type: 'string', description: 'Campaign name' },
+        type: { type: 'string', description: 'Campaign type: google, outlook, seg (default: google)' },
+      },
+      required: ['client_id', 'name'],
+    },
+  },
+  {
+    name: 'pause_campaign',
+    description: 'Pause an active campaign',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client ID' },
+        campaign_id: { type: 'string', description: 'Campaign numeric ID' },
+      },
+      required: ['client_id', 'campaign_id'],
+    },
+  },
+  {
+    name: 'resume_campaign',
+    description: 'Resume a paused campaign',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client ID' },
+        campaign_id: { type: 'string', description: 'Campaign numeric ID' },
+      },
+      required: ['client_id', 'campaign_id'],
+    },
+  },
+  {
+    name: 'get_campaign_stats',
+    description: 'Get sending statistics for a campaign (sent, opened, replied, bounced)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client ID' },
+        campaign_id: { type: 'string', description: 'Campaign numeric ID' },
+      },
+      required: ['client_id', 'campaign_id'],
+    },
+  },
+  {
+    name: 'remove_senders',
+    description: 'Remove/detach sender emails from a campaign',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client ID' },
+        campaign_id: { type: 'string', description: 'Campaign numeric ID' },
+        sender_ids: { type: 'array', items: { type: 'number' }, description: 'Sender email IDs to remove' },
+      },
+      required: ['client_id', 'campaign_id', 'sender_ids'],
+    },
+  },
+  {
+    name: 'move_senders',
+    description: 'Move sender emails from one campaign to another (removes from source, adds to target)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client ID' },
+        source_campaign_id: { type: 'string', description: 'Campaign to remove senders FROM' },
+        target_campaign_id: { type: 'string', description: 'Campaign to assign senders TO' },
+        sender_ids: { type: 'array', items: { type: 'number' }, description: 'Specific sender IDs to move. If empty, moves ALL senders from source.' },
+      },
+      required: ['client_id', 'source_campaign_id', 'target_campaign_id'],
+    },
+  },
+  {
+    name: 'compare_campaign_senders',
+    description: 'Compare sender emails across multiple campaigns — shows overlaps and unique senders',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'Client ID' },
+        campaign_ids: { type: 'array', items: { type: 'string' }, description: 'List of campaign IDs to compare' },
+      },
+      required: ['client_id', 'campaign_ids'],
+    },
+  },
 ];
 
 async function handleMcpTool(name, args) {
@@ -1046,6 +1147,115 @@ async function handleMcpTool(name, args) {
       let camps = Array.isArray(res) ? res : (res.data || []);
       if (args.query) camps = camps.filter(c => c.name?.toLowerCase().includes(args.query.toLowerCase()));
       return camps.slice(0, 30).map(c => ({ id: c.id, name: c.name, status: c.status, leads: c.total_leads }));
+    }
+
+    case 'get_campaign_leads': {
+      const page = args.page || 1;
+      const data = await eb(args.client_id, `/api/campaigns/${args.campaign_id}/leads?page=${page}&per_page=50`);
+      const leads = data.data || (Array.isArray(data) ? data : []);
+      return {
+        page, total: data.meta?.total || leads.length, last_page: data.meta?.last_page || 1,
+        leads: leads.map(l => ({ id: l.id, email: l.email, first_name: l.first_name, last_name: l.last_name, company: l.company_name, status: l.status })),
+      };
+    }
+
+    case 'create_campaign': {
+      const payload = { name: args.name, type: args.type || 'google' };
+      const created = await eb(args.client_id, '/api/campaigns', 'POST', payload);
+      const id = created.data?.id || created.id;
+      // Auto-apply schedule + plain text
+      const schedulePayload = { monday:true, tuesday:true, wednesday:true, thursday:true, friday:true, saturday:false, sunday:false, start_time:'08:00:00', end_time:'17:00:00', timezone:'America/New_York' };
+      try { await eb(args.client_id, `/api/campaigns/${id}/schedule`, 'POST', schedulePayload); } catch(_) {}
+      try { await eb(args.client_id, `/api/campaigns/${id}/update`, 'PATCH', { plain_text: true, track_opens: false, track_clicks: false }); } catch(_) {}
+      return { ok: true, id, name: args.name };
+    }
+
+    case 'pause_campaign': {
+      await eb(args.client_id, `/api/campaigns/${args.campaign_id}/pause`, 'POST', {});
+      return { ok: true, campaign_id: args.campaign_id, status: 'paused' };
+    }
+
+    case 'resume_campaign': {
+      await eb(args.client_id, `/api/campaigns/${args.campaign_id}/resume`, 'POST', {});
+      return { ok: true, campaign_id: args.campaign_id, status: 'resumed' };
+    }
+
+    case 'get_campaign_stats': {
+      const data = await eb(args.client_id, `/api/campaigns/${args.campaign_id}`);
+      const camp = data.data || data;
+      return {
+        id: camp.id, name: camp.name, status: camp.status,
+        total_leads: camp.total_leads,
+        emails_sent: camp.emails_sent,
+        opened: camp.opened, unique_opens: camp.unique_opens,
+        replied: camp.replied, unique_replies: camp.unique_replies,
+        bounced: camp.bounced,
+        unsubscribed: camp.unsubscribed,
+        interested: camp.interested,
+        completion_percentage: camp.completion_percentage,
+      };
+    }
+
+    case 'remove_senders': {
+      // Try detach endpoint
+      try {
+        await eb(args.client_id, `/api/campaigns/${args.campaign_id}/detach-sender-emails`, 'POST', { sender_email_ids: args.sender_ids });
+        return { ok: true, removed: args.sender_ids.length };
+      } catch(_) {}
+      // Fallback: try DELETE
+      await Promise.all(args.sender_ids.map(id =>
+        eb(args.client_id, `/api/campaigns/${args.campaign_id}/sender-emails/${id}`, 'DELETE').catch(()=>{})
+      ));
+      return { ok: true, removed: args.sender_ids.length };
+    }
+
+    case 'move_senders': {
+      // Get senders from source campaign
+      const first = await eb(args.client_id, `/api/campaigns/${args.source_campaign_id}/sender-emails?page=1`);
+      let allSnds = first.data || [];
+      const lp = first.meta?.last_page || 1;
+      if (lp > 1) {
+        const pages = Array.from({length: lp-1}, (_,i)=>i+2);
+        const results = await Promise.all(pages.map(p => eb(args.client_id, `/api/campaigns/${args.source_campaign_id}/sender-emails?page=${p}`).catch(()=>({data:[]}))));
+        results.forEach(r => { allSnds = allSnds.concat(r.data||[]); });
+      }
+      const ids = args.sender_ids?.length ? args.sender_ids : allSnds.map(s => s.id);
+      if (!ids.length) return { ok: false, error: 'No senders found in source campaign' };
+      // Remove from source
+      try { await eb(args.client_id, `/api/campaigns/${args.source_campaign_id}/detach-sender-emails`, 'POST', { sender_email_ids: ids }); } catch(_) {}
+      // Add to target
+      await eb(args.client_id, `/api/campaigns/${args.target_campaign_id}/attach-sender-emails`, 'POST', { sender_email_ids: ids });
+      const movedEmails = allSnds.filter(s => ids.includes(s.id)).map(s => s.email);
+      return { ok: true, moved: ids.length, emails: movedEmails };
+    }
+
+    case 'compare_campaign_senders': {
+      const results = await Promise.all(
+        args.campaign_ids.map(async cid => {
+          const first = await eb(args.client_id, `/api/campaigns/${cid}/sender-emails?page=1`);
+          let snds = first.data || [];
+          const lp = first.meta?.last_page || 1;
+          if (lp > 1) {
+            const pages = Array.from({length: lp-1}, (_,i)=>i+2);
+            const rs = await Promise.all(pages.map(p => eb(args.client_id, `/api/campaigns/${cid}/sender-emails?page=${p}`).catch(()=>({data:[]}))));
+            rs.forEach(r => { snds = snds.concat(r.data||[]); });
+          }
+          return { campaign_id: cid, senders: snds.map(s => ({ id: s.id, email: s.email })) };
+        })
+      );
+      // Find overlaps
+      const emailMap = {};
+      results.forEach(r => r.senders.forEach(s => {
+        if (!emailMap[s.email]) emailMap[s.email] = [];
+        emailMap[s.email].push(r.campaign_id);
+      }));
+      const shared = Object.entries(emailMap).filter(([,camps]) => camps.length > 1).map(([email, camps]) => ({ email, in_campaigns: camps }));
+      const unique = results.map(r => ({
+        campaign_id: r.campaign_id,
+        total: r.senders.length,
+        unique_only: r.senders.filter(s => emailMap[s.email].length === 1).map(s => s.email),
+      }));
+      return { shared_senders: shared, shared_count: shared.length, per_campaign: unique };
     }
 
     default:
