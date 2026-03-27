@@ -1892,15 +1892,29 @@ async function handleMcpTool(name, args) {
       return CLIENTS.map(c => ({ id: c.id, name: c.name }));
 
     case 'list_campaigns': {
-      const res = await eb(args.client_id, '/api/campaigns?per_page=100&sort=created_at&order=desc');
-      let camps = Array.isArray(res) ? res : (res.data || []);
+      // API always returns 15/page regardless of per_page param — must paginate
+      const first = await eb(args.client_id, '/api/campaigns?page=1');
+      let camps = Array.isArray(first) ? first : (first.data || []);
+      const lastPage = first.meta?.last_page || 1;
+      if (lastPage > 1) {
+        const pages = Array.from({length: lastPage-1}, (_,i) => i+2);
+        const results = await Promise.all(pages.map(p => eb(args.client_id, `/api/campaigns?page=${p}`).catch(()=>({data:[]}))));
+        results.forEach(r => { camps = camps.concat(Array.isArray(r) ? r : (r.data||[])); });
+      }
       if (args.status) camps = camps.filter(c => c.status?.toLowerCase() === args.status.toLowerCase());
       return camps.map(c => ({ id: c.id, name: c.name, status: c.status, leads: c.total_leads, created: c.created_at }));
     }
 
     case 'list_draft_campaigns': {
-      const res = await eb(args.client_id, '/api/campaigns?per_page=100&sort=created_at&order=desc');
-      const camps = (Array.isArray(res) ? res : (res.data || [])).filter(c => c.status?.toLowerCase() === 'draft');
+      const first = await eb(args.client_id, '/api/campaigns?page=1');
+      let allCamps = Array.isArray(first) ? first : (first.data || []);
+      const lastPage = first.meta?.last_page || 1;
+      if (lastPage > 1) {
+        const pages = Array.from({length: lastPage-1}, (_,i) => i+2);
+        const results = await Promise.all(pages.map(p => eb(args.client_id, `/api/campaigns?page=${p}`).catch(()=>({data:[]}))));
+        results.forEach(r => { allCamps = allCamps.concat(Array.isArray(r) ? r : (r.data||[])); });
+      }
+      const camps = allCamps.filter(c => c.status?.toLowerCase() === 'draft');
       return camps.map(c => {
         const todo = [];
         if (!c.total_leads) todo.push('upload leads');
@@ -2024,15 +2038,22 @@ async function handleMcpTool(name, args) {
     }
 
     case 'search_campaigns': {
-      const res = await eb(args.client_id, '/api/campaigns?per_page=200&sort=created_at&order=desc');
-      let camps = Array.isArray(res) ? res : (res.data || []);
-      if (args.query) camps = camps.filter(c => c.name?.toLowerCase().includes(args.query.toLowerCase()));
-      return camps.slice(0, 30).map(c => ({ id: c.id, name: c.name, status: c.status, leads: c.total_leads }));
+      // API supports search param natively — use it, then paginate
+      const searchParam = args.query ? `&search=${encodeURIComponent(args.query)}` : '';
+      const first = await eb(args.client_id, `/api/campaigns?page=1${searchParam}`);
+      let camps = Array.isArray(first) ? first : (first.data || []);
+      const lastPage = first.meta?.last_page || 1;
+      if (lastPage > 1) {
+        const pages = Array.from({length: lastPage-1}, (_,i) => i+2);
+        const results = await Promise.all(pages.map(p => eb(args.client_id, `/api/campaigns?page=${p}${searchParam}`).catch(()=>({data:[]}))));
+        results.forEach(r => { camps = camps.concat(Array.isArray(r) ? r : (r.data||[])); });
+      }
+      return camps.map(c => ({ id: c.id, name: c.name, status: c.status, leads: c.total_leads }));
     }
 
     case 'get_campaign_leads': {
       const page = args.page || 1;
-      const data = await eb(args.client_id, `/api/campaigns/${args.campaign_id}/leads?page=${page}&per_page=50`);
+      const data = await eb(args.client_id, `/api/campaigns/${args.campaign_id}/leads?page=${page}`);
       const leads = data.data || (Array.isArray(data) ? data : []);
       return {
         page, total: data.meta?.total || leads.length, last_page: data.meta?.last_page || 1,
@@ -2052,12 +2073,12 @@ async function handleMcpTool(name, args) {
     }
 
     case 'pause_campaign': {
-      await eb(args.client_id, `/api/campaigns/${args.campaign_id}/pause`, 'POST', {});
+      await eb(args.client_id, `/api/campaigns/${args.campaign_id}/pause`, 'PATCH', {});
       return { ok: true, campaign_id: args.campaign_id, status: 'paused' };
     }
 
     case 'resume_campaign': {
-      await eb(args.client_id, `/api/campaigns/${args.campaign_id}/resume`, 'POST', {});
+      await eb(args.client_id, `/api/campaigns/${args.campaign_id}/resume`, 'PATCH', {});
       return { ok: true, campaign_id: args.campaign_id, status: 'resumed' };
     }
 
@@ -2080,7 +2101,7 @@ async function handleMcpTool(name, args) {
     case 'remove_senders': {
       // Try detach endpoint
       try {
-        await eb(args.client_id, `/api/campaigns/${args.campaign_id}/detach-sender-emails`, 'POST', { sender_email_ids: args.sender_ids });
+        await eb(args.client_id, `/api/campaigns/${args.campaign_id}/remove-sender-emails`, 'DELETE', { sender_email_ids: args.sender_ids });
         return { ok: true, removed: args.sender_ids.length };
       } catch(_) {}
       // Fallback: try DELETE
@@ -2103,7 +2124,7 @@ async function handleMcpTool(name, args) {
       const ids = args.sender_ids?.length ? args.sender_ids : allSnds.map(s => s.id);
       if (!ids.length) return { ok: false, error: 'No senders found in source campaign' };
       // Remove from source
-      try { await eb(args.client_id, `/api/campaigns/${args.source_campaign_id}/detach-sender-emails`, 'POST', { sender_email_ids: ids }); } catch(_) {}
+      try { await eb(args.client_id, `/api/campaigns/${args.source_campaign_id}/remove-sender-emails`, 'DELETE', { sender_email_ids: ids }); } catch(_) {}
       // Add to target
       await eb(args.client_id, `/api/campaigns/${args.target_campaign_id}/attach-sender-emails`, 'POST', { sender_email_ids: ids });
       const movedEmails = allSnds.filter(s => ids.includes(s.id)).map(s => s.email);
@@ -2167,7 +2188,7 @@ async function handleMcpTool(name, args) {
       if (lastPage > 1) {
         const pages = Array.from({length: lastPage-1}, (_,i) => i+2);
         const results = await Promise.all(pages.map(p =>
-          eb(args.client_id, `/api/campaigns/${args.source_campaign_id}/leads?page=${p}&per_page=100`).catch(()=>({data:[]}))
+          eb(args.client_id, `/api/campaigns/${args.source_campaign_id}/leads?page=${p}`).catch(()=>({data:[]}))
         ));
         results.forEach(r => { allLeads = allLeads.concat(r.data||[]); });
       }
@@ -2203,9 +2224,9 @@ async function handleMcpTool(name, args) {
     case 'import_leads_to_campaign': {
       // Use EmailBison's "Import leads from existing list" endpoint
       const result = await eb(args.client_id,
-        `/api/campaigns/${args.target_campaign_id}/import-leads`,
+        `/api/campaigns/${args.target_campaign_id}/leads/attach-lead-list`,
         'POST',
-        { campaign_id: parseInt(args.source_campaign_id) }
+        { lead_list_id: parseInt(args.source_campaign_id) }
       );
       return { ok:true, result };
     }
@@ -2586,7 +2607,7 @@ async function handleMcpTool(name, args) {
     }
     case 'get_campaign_sending_schedule': {
       const day = args.day || 'today';
-      return await eb(args.client_id, `/api/campaigns/${args.campaign_id}/sending-schedule`, 'GET', { day });
+      return await eb(args.client_id, `/api/campaigns/${args.campaign_id}/sending-schedule`, 'GET', { day: day });
     }
 
     // ── Passthrough tools ───────────────────────────────────────────────────
