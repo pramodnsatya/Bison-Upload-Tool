@@ -1002,6 +1002,38 @@ const MCP_TOOLS = [
       required: ['client_id', 'campaign_ids'],
     },
   },
+  // ── Lead management tools ────────────────────────────────────────────────
+  {
+    name: 'get_leads',
+    description: 'Get leads from a campaign with pagination',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      campaign_id: { type:'string', description:'Campaign numeric ID' },
+      page: { type:'number', description:'Page number (default 1)' },
+      per_page: { type:'number', description:'Results per page (default 50, max 100)' },
+    }, required:['client_id','campaign_id'] },
+  },
+  {
+    name: 'add_leads',
+    description: 'Add leads to a campaign from a list of email addresses (or full lead objects)',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      campaign_id: { type:'string', description:'Campaign numeric ID' },
+      leads: { type:'array', description:'Array of lead objects with at minimum an email field', items: { type:'object', properties: { email:{type:'string'}, first_name:{type:'string'}, last_name:{type:'string'}, company_name:{type:'string'} }, required:['email'] } },
+    }, required:['client_id','campaign_id','leads'] },
+  },
+  {
+    name: 'move_leads',
+    description: 'Move leads from one campaign to another — fetches from source, adds to target. Optionally deletes from source if the API supports it.',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      source_campaign_id: { type:'string', description:'Campaign to move leads FROM' },
+      target_campaign_id: { type:'string', description:'Campaign to move leads TO' },
+      limit: { type:'number', description:'Max number of leads to move (default: all)' },
+      status_filter: { type:'string', description:'Only move leads with this status (e.g. pending, contacted, replied). Default: all.' },
+    }, required:['client_id','source_campaign_id','target_campaign_id'] },
+  },
+
   // ── Passthrough tools — direct access to any EmailBison API endpoint ──────
   {
     name: 'eb_get',
@@ -1307,6 +1339,53 @@ async function handleMcpTool(name, args) {
         unique_only: r.senders.filter(s => emailMap[s.email].length === 1).map(s => s.email),
       }));
       return { shared_senders: shared, shared_count: shared.length, per_campaign: unique };
+    }
+
+    // ── Lead management ─────────────────────────────────────────────────────
+    case 'get_leads': {
+      const page = args.page || 1;
+      const perPage = args.per_page || 50;
+      const data = await eb(args.client_id, `/api/campaigns/${args.campaign_id}/leads?page=${page}&per_page=${perPage}`);
+      const leads = data.data || (Array.isArray(data) ? data : []);
+      return {
+        page, per_page: perPage,
+        total: data.meta?.total || leads.length,
+        last_page: data.meta?.last_page || 1,
+        leads: leads.map(l => ({ id:l.id, email:l.email, first_name:l.first_name, last_name:l.last_name, company:l.company_name, status:l.status })),
+      };
+    }
+
+    case 'add_leads': {
+      const mapped = args.leads.map(l => ({ email:l.email, first_name:l.first_name||'', last_name:l.last_name||'', company_name:l.company_name||'' }));
+      const result = await eb(args.client_id, `/api/campaigns/${args.campaign_id}/leads`, 'POST', { leads: mapped });
+      return { ok:true, added: mapped.length, result };
+    }
+
+    case 'move_leads': {
+      // Fetch all leads from source campaign
+      const first = await eb(args.client_id, `/api/campaigns/${args.source_campaign_id}/leads?page=1&per_page=100`);
+      let allLeads = first.data || [];
+      const lastPage = first.meta?.last_page || 1;
+      if (lastPage > 1) {
+        const pages = Array.from({length: lastPage-1}, (_,i) => i+2);
+        const results = await Promise.all(pages.map(p =>
+          eb(args.client_id, `/api/campaigns/${args.source_campaign_id}/leads?page=${p}&per_page=100`).catch(()=>({data:[]}))
+        ));
+        results.forEach(r => { allLeads = allLeads.concat(r.data||[]); });
+      }
+      // Apply filters
+      if (args.status_filter) allLeads = allLeads.filter(l => l.status?.toLowerCase() === args.status_filter.toLowerCase());
+      if (args.limit) allLeads = allLeads.slice(0, args.limit);
+      if (!allLeads.length) return { ok:false, error:'No leads found matching criteria in source campaign' };
+      // Add to target campaign
+      const mapped = allLeads.map(l => ({ email:l.email, first_name:l.first_name||'', last_name:l.last_name||'', company_name:l.company_name||'' }));
+      await eb(args.client_id, `/api/campaigns/${args.target_campaign_id}/leads`, 'POST', { leads: mapped });
+      return {
+        ok: true,
+        moved: allLeads.length,
+        sample_emails: allLeads.slice(0,5).map(l=>l.email),
+        note: 'Leads added to target campaign. EmailBison API does not support removing leads from a campaign, so they remain in the source campaign as well.',
+      };
     }
 
     // ── Passthrough tools ───────────────────────────────────────────────────
