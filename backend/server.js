@@ -798,6 +798,7 @@ const MCP_TOOLS = [
         provider: { type: 'string', description: 'Filter by provider: google, outlook, all (default: all)' },
         min_warmup_score: { type: 'number', description: 'Minimum warmup score (0-100)' },
         ready_only: { type: 'boolean', description: 'Only show senders with warmup>100 or emails_sent>0 and status Connected' },
+        domains: { type: 'array', items: { type: 'string' }, description: 'Filter senders to only these sending domains e.g. ["founderled.io", "acme.com"]' },
       },
       required: ['client_id'],
     },
@@ -1978,6 +1979,16 @@ async function handleMcpTool(name, args) {
           s.status?.toLowerCase() === 'connected' &&
           ((s.warmup_sent || 0) > 100 || (s.emails_sent || 0) > 0)
         );
+      }
+      // Filter by single domain
+      if (args.domain) {
+        const d = args.domain.toLowerCase().replace(/^@/, '');
+        filtered = filtered.filter(s => (s.email || '').toLowerCase().endsWith('@' + d) || (s.email || '').toLowerCase().endsWith('.' + d));
+      }
+      // Filter by multiple domains
+      if (args.domains?.length) {
+        const ds = args.domains.map(d => d.toLowerCase().replace(/^@/, ''));
+        filtered = filtered.filter(s => ds.some(d => (s.email || '').toLowerCase().endsWith('@' + d) || (s.email || '').toLowerCase().endsWith('.' + d)));
       }
       return filtered.map(s => ({
         id: s.id,
