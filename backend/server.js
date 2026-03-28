@@ -2110,103 +2110,141 @@ async function handleMcpTool(name, args) {
     }
 
     case 'auto_assign_senders': {
-      // ── Founderled Sender Assignment Logic ──────────────────────────────
-      // Step 1: Fetch all enriched senders (warmup score, warmup_sent, emails_sent, status, bounce_protection)
+      // Founderled Sender Assignment Logic — matches SKILL.md exactly
+
+      // STEP 1: Fetch all enriched senders
       const allSenders = await mcpFetchEnrichedSenders(args.client_id);
 
-      // Step 2: Also fetch active campaign counts per sender
-      // (mcpFetchEnrichedSenders skips campaign counting for speed — we need it here)
-      // Fetch campaigns and build sender → active campaign count map
+      // STEP 2: Fetch all campaigns + build active campaign count per sender
       const campFirst = await eb(args.client_id, '/api/campaigns?page=1');
       let allCamps = campFirst.data || [];
       const campLastPage = campFirst.meta?.last_page || 1;
       if (campLastPage > 1) {
-        const pages = Array.from({length: campLastPage-1}, (_,i) => i+2);
-        const results = await Promise.all(pages.map(p => eb(args.client_id, `/api/campaigns?page=${p}`).catch(()=>({data:[]}))));
-        results.forEach(r => { allCamps = allCamps.concat(r.data||[]); });
+        const campPages = Array.from({length: campLastPage-1}, (_,i) => i+2);
+        const campRes = await Promise.all(campPages.map(p => eb(args.client_id, '/api/campaigns?page='+p).catch(()=>({data:[]}))));
+        campRes.forEach(r => { allCamps = allCamps.concat(r.data||[]); });
       }
       const activeStatuses = ['active','launching','sending','queued','running'];
-      const activeCamps = allCamps.filter(c => activeStatuses.includes((c.status||'').toLowerCase()));
+      const activeCamps = allCamps.filter(camp => activeStatuses.includes((camp.status||'').toLowerCase()));
 
-      // Build sender → active campaign count
       const senderActiveCampCount = {};
-      // Fetch senders for each active campaign in parallel (capped to avoid overloading)
       const campSenderResults = await Promise.allSettled(
         activeCamps.slice(0, 50).map(async camp => {
-          const r = await eb(args.client_id, `/api/campaigns/${camp.id}/sender-emails?page=1`);
+          const r = await eb(args.client_id, '/api/campaigns/'+camp.id+'/sender-emails?page=1');
           return (r.data || []).map(s => s.id);
         })
       );
       campSenderResults.forEach(r => {
+        if (r.status === 'fulfilled') r.value.forEach(id => { senderActiveCampCount[id] = (senderActiveCampCount[id]||0)+1; });
+      });
+
+      // STEP 3: Build "busy today" sender set for Tier 2 check
+      // Skill: check scheduled emails for each active campaign — senders with sends today are ineligible for Tier 2
+      const todayStr = new Date().toISOString().split('T')[0];
+      const busyTodaySenderIds = new Set();
+      const schedResults = await Promise.allSettled(
+        activeCamps.slice(0, 50).map(async camp => {
+          const r = await eb(args.client_id, '/api/campaigns/'+camp.id+'/scheduled-emails?status=scheduled');
+          return (r.data || []);
+        })
+      );
+      schedResults.forEach(r => {
         if (r.status === 'fulfilled') {
-          r.value.forEach(id => {
-            senderActiveCampCount[id] = (senderActiveCampCount[id] || 0) + 1;
+          r.value.forEach(email => {
+            const schedDate = (email.scheduled_date_local || email.scheduled_date || '').split('T')[0];
+            if (schedDate === todayStr && email.sender_email && email.sender_email.id) {
+              busyTodaySenderIds.add(email.sender_email.id);
+            }
           });
         }
       });
 
-      // Step 3: Get today's date to check account age
+      // STEP 4: Apply hard disqualifiers + classify Tier 1 / Tier 2
       const today = new Date();
-
-      // Step 4: Apply hard disqualifiers and classify into Tier 1 / Tier 2
       const tier1 = [];
       const tier2 = [];
       const disqualified = [];
+      const flaggedForReview = [];
 
       for (const s of allSenders) {
         // Provider filter
         if (args.provider && args.provider !== 'all') {
           const prov = (s.provider || s.type || '').toLowerCase();
-          const wantGoogle = args.provider === 'google';
           const isGoogle = prov.includes('google') || prov.includes('gmail');
           const isOutlook = prov.includes('microsoft') || prov.includes('outlook');
-          if (wantGoogle && !isGoogle) continue;
+          if (args.provider === 'google' && !isGoogle) continue;
           if (args.provider === 'outlook' && !isOutlook) continue;
         }
 
-        // Hard disqualifiers
+        // Hard disqualifier 1: bounce_protection must be OFF
         if (s.bounce_protection) { disqualified.push({id:s.id, email:s.email, reason:'bounce_protection'}); continue; }
-        const status = (s.status || '').toLowerCase();
-        if (!status.includes('connected') && status !== 'active') { disqualified.push({id:s.id, email:s.email, reason:'status_'+status}); continue; }
 
-        const activeCampCount = senderActiveCampCount[s.id] || s.active_campaign_count || 0;
-        const warmupScore = s.warmup_score || 0;
+        // Hard disqualifier 2: must be Connected
+        const status = (s.status || '').toLowerCase();
+        if (!status.includes('connected')) { disqualified.push({id:s.id, email:s.email, reason:'not_connected:'+status}); continue; }
+
+        // Null warmup_score — skill says flag for manual review, do NOT assign
+        if (s.warmup_score === null || s.warmup_score === undefined) {
+          flaggedForReview.push({id:s.id, email:s.email, reason:'warmup_score_null_needs_manual_review'});
+          continue;
+        }
+
+        const activeCampCount = senderActiveCampCount[s.id] || 0;
+        const warmupScore = s.warmup_score;
         const warmupSent = s.warmup_sent || 0;
         const emailsSent = s.emails_sent || 0;
         const isSeasoned = emailsSent > 0;
 
-        // Check account age for new senders
-        let ageInDays = 999; // default assume old enough
-        if (!isSeasoned && s.created_at) {
-          const created = new Date(s.created_at);
-          ageInDays = Math.floor((today - created) / (1000 * 60 * 60 * 24));
-        }
-
-        // Determine qualification
         let qualifies = false;
+        let disqualReason = '';
+
         if (isSeasoned) {
+          // Seasoned: only warmup_score > 90 required
           qualifies = warmupScore > 90;
+          if (!qualifies) disqualReason = 'seasoned_warmup_'+warmupScore+'_not_above_90';
         } else {
-          qualifies = warmupScore > 95 && warmupSent > 130 && ageInDays >= 14;
+          // New sender: ALL THREE must pass
+          // created_at is NOT returned by list_senders — use enriched data or flag
+          let ageInDays = null;
+          if (s.created_at) {
+            ageInDays = Math.floor((today - new Date(s.created_at)) / (1000*60*60*24));
+          }
+          if (ageInDays === null) {
+            // Skill: do NOT assume old enough — flag for review
+            flaggedForReview.push({id:s.id, email:s.email, reason:'new_sender_age_unknown_cannot_confirm_14_days'});
+            continue;
+          }
+          const scoreOk = warmupScore > 95;
+          const warmupOk = warmupSent > 130;
+          const ageOk = ageInDays >= 14;
+          qualifies = scoreOk && warmupOk && ageOk;
+          if (!qualifies) {
+            disqualReason = !scoreOk ? 'new_score_'+warmupScore+'_not_above_95'
+              : !warmupOk ? 'new_warmup_sent_'+warmupSent+'_not_above_130'
+              : 'new_age_'+ageInDays+'_days_under_14';
+          }
         }
 
-        if (!qualifies) { disqualified.push({id:s.id, email:s.email, reason:`warmup_score_${warmupScore}_insufficient`}); continue; }
+        if (!qualifies) { disqualified.push({id:s.id, email:s.email, reason:disqualReason}); continue; }
 
+        // Tier classification
         if (activeCampCount === 0) {
           tier1.push({id:s.id, email:s.email, warmup_score:warmupScore, warmup_sent:warmupSent, emails_sent:emailsSent, active_campaigns:activeCampCount, tier:1});
         } else {
-          tier2.push({id:s.id, email:s.email, warmup_score:warmupScore, warmup_sent:warmupSent, emails_sent:emailsSent, active_campaigns:activeCampCount, tier:2});
+          // Tier 2: active campaigns but NOT sending today
+          if (!busyTodaySenderIds.has(s.id)) {
+            tier2.push({id:s.id, email:s.email, warmup_score:warmupScore, warmup_sent:warmupSent, emails_sent:emailsSent, active_campaigns:activeCampCount, tier:2});
+          } else {
+            disqualified.push({id:s.id, email:s.email, reason:'tier2_has_sends_scheduled_today'});
+          }
         }
       }
 
-      // Step 5: Select senders — Tier 1 first, then Tier 2 if allowed
+      // STEP 5: Select — Tier 1 first sorted by score desc, then Tier 2
       const allowTier2 = args.allow_tier2 !== false;
-      let selected = [...tier1];
-      if (allowTier2) selected = selected.concat(tier2);
-
-      // Sort by warmup_score desc within each tier
-      selected.sort((a,b) => (a.tier - b.tier) || (b.warmup_score - a.warmup_score));
-
+      tier1.sort((a,b) => b.warmup_score - a.warmup_score);
+      tier2.sort((a,b) => b.warmup_score - a.warmup_score);
+      let selected = allowTier2 ? [...tier1, ...tier2] : [...tier1];
       if (args.count) selected = selected.slice(0, args.count);
 
       if (!selected.length) {
@@ -2216,24 +2254,26 @@ async function handleMcpTool(name, args) {
           tier1_count: tier1.length,
           tier2_count: tier2.length,
           disqualified_count: disqualified.length,
-          disqualified_sample: disqualified.slice(0, 5),
+          flagged_for_review: flaggedForReview,
+          disqualified_sample: disqualified.slice(0, 10),
         };
       }
 
-      // Step 6: Assign (or dry run)
+      // STEP 6: Assign or dry run
       if (args.dry_run) {
         return {
-          ok: true,
-          dry_run: true,
+          ok: true, dry_run: true,
           would_assign: selected.length,
           tier1_selected: selected.filter(s=>s.tier===1).length,
           tier2_selected: selected.filter(s=>s.tier===2).length,
           senders: selected,
           disqualified_count: disqualified.length,
+          flagged_for_review: flaggedForReview,
+          busy_today_count: busyTodaySenderIds.size,
         };
       }
 
-      await eb(args.client_id, `/api/campaigns/${args.campaign_id}/attach-sender-emails`, 'POST', {
+      await eb(args.client_id, '/api/campaigns/'+args.campaign_id+'/attach-sender-emails', 'POST', {
         sender_email_ids: selected.map(s => s.id),
       });
 
@@ -2242,12 +2282,14 @@ async function handleMcpTool(name, args) {
         assigned: selected.length,
         tier1_assigned: selected.filter(s=>s.tier===1).length,
         tier2_assigned: selected.filter(s=>s.tier===2).length,
-        senders: selected.map(s => ({id:s.id, email:s.email, warmup_score:s.warmup_score, tier:s.tier})),
+        senders: selected.map(s => ({id:s.id, email:s.email, warmup_score:s.warmup_score, tier:s.tier, active_campaigns:s.active_campaigns})),
         disqualified_count: disqualified.length,
+        flagged_for_review: flaggedForReview,
+        busy_today_count: busyTodaySenderIds.size,
       };
     }
 
-        case 'assign_senders': {
+            case 'assign_senders': {
       await eb(args.client_id, `/api/campaigns/${args.campaign_id}/attach-sender-emails`, 'POST', { sender_email_ids: args.sender_ids });
       return { ok: true, assigned: args.sender_ids.length };
     }
