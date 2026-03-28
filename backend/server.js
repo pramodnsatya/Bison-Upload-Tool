@@ -755,7 +755,8 @@ async function mcpFetchEnrichedSenders(clientId) {
       emails_sent: s.emails_sent_count ?? null,
       bounce_protection: !!bounceTag,
       status: s.status,
-      active_campaign_count: 0, // skip campaign counting for MCP speed
+      created_at: s.created_at ?? null,
+      active_campaign_count: 0,
     };
   });
 }
