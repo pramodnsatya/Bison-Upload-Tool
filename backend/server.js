@@ -1066,11 +1066,12 @@ Count: pass count to limit how many senders to assign. Default assigns all quali
   },
   {
     name: 'add_leads',
-    description: 'Add leads to a campaign from a list of email addresses (or full lead objects)',
+    description: 'Add leads to a campaign. Supports three duplicate handling modes: skip (default — do not add leads already in the workspace), update (refresh their fields and add to campaign), replace (same as update but fully replaces all fields). Matches the Skip/Update/Replace existing behaviour from the web upload tool.',
     inputSchema: { type:'object', properties: {
       client_id: { type:'string', description:'Client ID' },
       campaign_id: { type:'string', description:'Campaign numeric ID' },
-      leads: { type:'array', description:'Array of lead objects with at minimum an email field', items: { type:'object', properties: { email:{type:'string'}, first_name:{type:'string'}, last_name:{type:'string'}, company_name:{type:'string'} }, required:['email'] } },
+      duplicate_mode: { type:'string', description:'How to handle leads that already exist in the workspace: skip (default) = do not add them to campaign at all; update = refresh their fields with new data and add to campaign; replace = fully replace all their fields and add to campaign' },
+      leads: { type:'array', description:'Array of lead objects. Minimum: email field.', items: { type:'object', properties: { email:{type:'string'}, first_name:{type:'string'}, last_name:{type:'string'}, company_name:{type:'string'}, title:{type:'string'}, custom_variables:{type:'array'} }, required:['email'] } },
     }, required:['client_id','campaign_id','leads'] },
   },
   {
@@ -1159,10 +1160,11 @@ Count: pass count to limit how many senders to assign. Default assigns all quali
   // ── Leads (global, not campaign-scoped) ─────────────────────────────────
   {
     name: 'get_all_leads',
-    description: 'Get all leads in the workspace (not campaign-scoped). Filter by search, status, tags.',
+    description: 'Get all leads in the workspace (not campaign-scoped). Filter by search, tag_ids (e.g. Google/Outlook tag IDs), or status.',
     inputSchema: { type:'object', properties: {
       client_id: { type:'string', description:'Client ID' },
       search: { type:'string', description:'Search by name or email' },
+      tag_ids: { type:'array', items:{type:'number'}, description:'Filter leads by tag IDs (e.g. pass Google tag ID to get all Google leads)' },
       page: { type:'number', description:'Page number' },
     }, required:['client_id'] },
   },
@@ -2487,9 +2489,61 @@ async function handleMcpTool(name, args) {
     }
 
     case 'add_leads': {
-      const mapped = args.leads.map(l => ({ email:l.email, first_name:l.first_name||'', last_name:l.last_name||'', company_name:l.company_name||'' }));
-      const result = await eb(args.client_id, `/api/campaigns/${args.campaign_id}/leads`, 'POST', { leads: mapped });
-      return { ok:true, added: mapped.length, result };
+      const duplicateMode = args.duplicate_mode || 'skip'; // skip | update | replace
+      const mapped = args.leads.filter(l => l.email).map(l => {
+        const o = { email: l.email };
+        if (l.first_name) o.first_name = l.first_name;
+        if (l.last_name) o.last_name = l.last_name;
+        if (l.company_name) o.company_name = l.company_name;
+        if (l.title) o.title = l.title;
+        if (l.custom_variables) o.custom_variables = l.custom_variables;
+        return o;
+      });
+
+      const allLeadIds = [];
+      let skipped = 0;
+      let updated = 0;
+      let created = 0;
+      const BATCH = 50;
+
+      for (let i = 0; i < mapped.length; i += BATCH) {
+        const batch = mapped.slice(i, i + BATCH);
+        for (const lead of batch) {
+          try {
+            // Try to create — succeeds only if brand new to the workspace
+            const res = await eb(args.client_id, '/api/leads', 'POST', lead);
+            const leadId = res.id || res.data?.id;
+            if (leadId) { allLeadIds.push(leadId); created++; }
+          } catch (_) {
+            // Lead already exists in this workspace
+            try {
+              const found = await eb(args.client_id, '/api/leads?search=' + encodeURIComponent(lead.email));
+              const arr = Array.isArray(found) ? found : (found.data || []);
+              const existing = arr.find(l => l.email === lead.email);
+              if (existing) {
+                if (duplicateMode === 'skip') {
+                  skipped++;
+                } else {
+                  // update = PATCH (keep fields not passed), replace = PUT (clear fields not passed)
+                  const method = duplicateMode === 'replace' ? 'PUT' : 'PATCH';
+                  await eb(args.client_id, '/api/leads/' + existing.id, method, lead);
+                  allLeadIds.push(existing.id);
+                  updated++;
+                }
+              }
+            } catch (_2) { skipped++; }
+          }
+        }
+      }
+
+      // Attach collected lead IDs to the campaign in batches of 100
+      for (let i = 0; i < allLeadIds.length; i += 100) {
+        await eb(args.client_id, '/api/campaigns/' + args.campaign_id + '/leads/attach-leads', 'POST', {
+          lead_ids: allLeadIds.slice(i, i + 100),
+        });
+      }
+
+      return { ok: true, total: mapped.length, added_to_campaign: allLeadIds.length, created, updated, skipped, duplicate_mode: duplicateMode };
     }
 
     case 'move_leads': {
@@ -2576,7 +2630,11 @@ async function handleMcpTool(name, args) {
       const params = new URLSearchParams();
       if (args.search) params.set('search', args.search);
       if (args.page) params.set('page', args.page);
-      return await eb(args.client_id, `/api/leads?${params.toString()}`);
+      // tag_ids filter — API accepts repeated params: filters[tag_ids][]=1&filters[tag_ids][]=2
+      if (args.tag_ids && args.tag_ids.length) {
+        args.tag_ids.forEach(id => params.append('filters[tag_ids][]', id));
+      }
+      return await eb(args.client_id, '/api/leads?' + params.toString());
     }
     case 'get_lead': {
       return await eb(args.client_id, `/api/leads/${args.lead_id}`);
