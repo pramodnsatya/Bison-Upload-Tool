@@ -724,18 +724,25 @@ async function mcpFetchEnrichedSenders(clientId) {
     results.forEach(r => { senders = senders.concat(r.data || []); });
   }
 
-  // Fetch warmup data
+  // Fetch warmup data — requires start_date and end_date (use last 30 days for score accuracy)
   let warmupMap = {};
   try {
-    const wFirst = await eb(clientId, '/api/warmup/sender-emails?page=1');
+    const today = new Date().toISOString().split('T')[0];
+    const thirtyDaysAgo = new Date(Date.now() - 30*24*60*60*1000).toISOString().split('T')[0];
+    const warmupParams = 'start_date=' + thirtyDaysAgo + '&end_date=' + today;
+
+    const wFirst = await eb(clientId, '/api/warmup/sender-emails?page=1&' + warmupParams);
     let wAll = wFirst.data || [];
     const wLast = wFirst.meta?.last_page || 1;
     if (wLast > 1) {
       const wPages = Array.from({length: wLast - 1}, (_, i) => i + 2);
-      const wResults = await Promise.all(wPages.map(p => eb(clientId, `/api/warmup/sender-emails?page=${p}`).catch(() => ({data:[]}))));
+      const wResults = await Promise.all(wPages.map(p =>
+        eb(clientId, '/api/warmup/sender-emails?page=' + p + '&' + warmupParams).catch(() => ({data:[]}))
+      ));
       wResults.forEach(r => { wAll = wAll.concat(r.data || []); });
     }
-    wAll.forEach(ws => { warmupMap[ws.sender_email_id ?? ws.id] = ws; });
+    // Warmup response uses: id, warmup_score, warmup_emails_sent
+    wAll.forEach(ws => { warmupMap[ws.id] = ws; });
   } catch(_) {}
 
   return senders.map(s => {
@@ -750,8 +757,9 @@ async function mcpFetchEnrichedSenders(clientId) {
       email: s.email,
       name: s.name,
       provider,
-      warmup_score: wu.reputation_score ?? s.warmup_score ?? null,
-      warmup_sent: wu.total_sent_count ?? s.warmup_sent ?? null,
+      // warmup_score and warmup_emails_sent are the correct field names from the API
+      warmup_score: wu.warmup_score ?? null,
+      warmup_sent: wu.warmup_emails_sent ?? null,
       emails_sent: s.emails_sent_count ?? null,
       bounce_protection: !!bounceTag,
       status: s.status,
