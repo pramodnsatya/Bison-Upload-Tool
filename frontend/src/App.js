@@ -1108,10 +1108,6 @@ export default function App() {
             <div style={{ marginTop:16, padding:'12px 16px', background:T.surfaceAlt, borderRadius:10,
               display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
               <span style={{ fontSize:13, color:T.textSub, fontWeight:600 }}>Load copy from:</span>
-              {/* Saved templates */}
-              <TemplateInlinePicker onSelect={steps => {
-                setEmailSteps(steps);
-              }} />
               {/* Pull from existing campaign */}
               {clientId && (
                 <CampaignSequencePicker clientId={clientId} onSelect={steps => setEmailSteps(steps)} />
