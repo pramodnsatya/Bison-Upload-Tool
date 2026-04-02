@@ -1215,6 +1215,26 @@ Count: pass count to limit how many senders to assign. Default assigns all quali
     }, required:['client_id','lead_id'] },
   },
   {
+    name: 'bulk_update_leads',
+    description: 'Update multiple leads at once — useful for updating company name, title, or any field on leads already in a campaign without re-adding them. Pass an array of leads each with an email (used as identifier) plus any fields to update. Uses PATCH so only fields you pass are changed, everything else stays the same.',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      leads: {
+        type:'array',
+        description:'Array of leads to update. Each must have email as identifier, plus any fields to update (company, first_name, last_name, title, notes, custom_variables)',
+        items: { type:'object', properties: {
+          email: { type:'string', description:'Email address — used to identify the lead' },
+          company: { type:'string', description:'Company name to update' },
+          first_name: { type:'string' },
+          last_name: { type:'string' },
+          title: { type:'string' },
+          notes: { type:'string' },
+          custom_variables: { type:'array', items:{type:'object'} },
+        }, required:['email'] },
+      },
+    }, required:['client_id','leads'] },
+  },
+  {
     name: 'update_lead_status',
     description: 'Update a lead status: verified, unverified, unknown, unsubscribed, risky, inactive',
     inputSchema: { type:'object', properties: {
@@ -2656,6 +2676,51 @@ async function handleMcpTool(name, args) {
       if (args.custom_variables) body.custom_variables = args.custom_variables;
       return await eb(args.client_id, '/api/leads', 'POST', body);
     }
+    case 'bulk_update_leads': {
+      // Update many leads at once using email as identifier — PATCH only, never touches campaign membership
+      const results = { updated: 0, not_found: 0, errors: 0, details: [] };
+      const CONCURRENCY = 5; // run 5 at a time to avoid rate limiting
+
+      for (let i = 0; i < args.leads.length; i += CONCURRENCY) {
+        const batch = args.leads.slice(i, i + CONCURRENCY);
+        await Promise.all(batch.map(async lead => {
+          try {
+            // Build PATCH body — only include fields that were passed
+            const body = {};
+            if (lead.first_name !== undefined) body.first_name = lead.first_name;
+            if (lead.last_name !== undefined) body.last_name = lead.last_name;
+            if (lead.company !== undefined) body.company = lead.company;
+            if (lead.title !== undefined) body.title = lead.title;
+            if (lead.notes !== undefined) body.notes = lead.notes;
+            if (lead.custom_variables !== undefined) body.custom_variables = lead.custom_variables;
+
+            // Use email directly as the lead identifier — API accepts email or ID
+            await eb(args.client_id, '/api/leads/' + encodeURIComponent(lead.email), 'PATCH', body);
+            results.updated++;
+            results.details.push({ email: lead.email, status: 'updated' });
+          } catch (err) {
+            const msg = err.message || '';
+            if (msg.includes('404') || msg.includes('not found')) {
+              results.not_found++;
+              results.details.push({ email: lead.email, status: 'not_found' });
+            } else {
+              results.errors++;
+              results.details.push({ email: lead.email, status: 'error', error: msg.slice(0, 100) });
+            }
+          }
+        }));
+      }
+
+      return {
+        ok: true,
+        total: args.leads.length,
+        updated: results.updated,
+        not_found: results.not_found,
+        errors: results.errors,
+        details: results.details,
+      };
+    }
+
     case 'update_lead': {
       const method = args.patch_mode ? 'PATCH' : 'PUT';
       const body = {};
