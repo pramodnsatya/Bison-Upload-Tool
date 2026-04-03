@@ -326,7 +326,8 @@ app.post('/clients/:id/campaigns/:cid/leads', async (req, res) => {
       const o = { email: l.email };
       if (l.first_name)   o.first_name   = l.first_name;
       if (l.last_name)    o.last_name    = l.last_name;
-      if (l.company_name) o.company_name = l.company_name;
+      if (l.company_name) o.company = l.company_name;  // API field is 'company' not 'company_name'
+      if (l.company) o.company = l.company;  // also accept 'company' directly
       if (l.job_title)    o.job_title    = l.job_title;
       if (l.linkedin_url) o.linkedin_url = l.linkedin_url;
       return o;
@@ -2522,7 +2523,8 @@ async function handleMcpTool(name, args) {
         const o = { email: l.email };
         if (l.first_name) o.first_name = l.first_name;
         if (l.last_name) o.last_name = l.last_name;
-        if (l.company_name) o.company_name = l.company_name;
+        if (l.company_name) o.company = l.company_name;  // API field is 'company'
+        if (l.company) o.company = l.company;  // also accept 'company' directly
         if (l.title) o.title = l.title;
         if (l.custom_variables) o.custom_variables = l.custom_variables;
         return o;
