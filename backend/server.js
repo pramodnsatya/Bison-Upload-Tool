@@ -61,6 +61,60 @@ app.get('/clients/:id/test', async (req, res) => {
   } catch (e) { res.status(400).json({ ok: false, message: e.message }); }
 });
 
+// Sender availability check — single call replaces N paginated schedule lookups
+// POST /api/tools/sender-availability-check
+// { client_id, sender_ids: [1,2,3,...], date: "2026-04-06" }
+// Returns { clean: [ids free today], busy: [ids with sends scheduled today] }
+app.post('/api/tools/sender-availability-check', async (req, res) => {
+  try {
+    const { client_id, sender_ids, date } = req.body;
+    if (!client_id || !sender_ids || !sender_ids.length) {
+      return res.status(400).json({ error: 'client_id and sender_ids required' });
+    }
+    const checkDate = date || new Date().toISOString().split('T')[0];
+    const senderIdSet = new Set(sender_ids.map(Number));
+    const busyIds = new Set();
+
+    // Fetch all active campaigns
+    const campFirst = await eb(client_id, '/api/campaigns?page=1');
+    let allCamps = campFirst.data || [];
+    const campLastPage = campFirst.meta && campFirst.meta.last_page || 1;
+    if (campLastPage > 1) {
+      const pages = Array.from({length: campLastPage-1}, (_,i) => i+2);
+      const results = await Promise.all(pages.map(p => eb(client_id, '/api/campaigns?page='+p).catch(()=>({data:[]}))));
+      results.forEach(r => { allCamps = allCamps.concat(r.data||[]); });
+    }
+    const activeStatuses = ['active','launching','sending','queued','running'];
+    const activeCamps = allCamps.filter(c => activeStatuses.includes((c.status||'').toLowerCase()));
+
+    // Check scheduled emails for each active campaign in parallel
+    const schedResults = await Promise.allSettled(
+      activeCamps.slice(0, 50).map(async camp => {
+        const r = await eb(client_id, '/api/campaigns/'+camp.id+'/scheduled-emails?status=scheduled');
+        return r.data || [];
+      })
+    );
+
+    schedResults.forEach(r => {
+      if (r.status === 'fulfilled') {
+        r.value.forEach(email => {
+          const schedDate = (email.scheduled_date_local || email.scheduled_date || '').split('T')[0];
+          if (schedDate === checkDate && email.sender_email && email.sender_email.id) {
+            const sid = Number(email.sender_email.id);
+            if (senderIdSet.has(sid)) busyIds.add(sid);
+          }
+        });
+      }
+    });
+
+    const clean = sender_ids.map(Number).filter(id => !busyIds.has(id));
+    const busy  = sender_ids.map(Number).filter(id =>  busyIds.has(id));
+    res.json({ ok: true, date: checkDate, clean, busy, clean_count: clean.length, busy_count: busy.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/parse-csv', upload.single('file'), (req, res) => {
   try {
     const { data } = Papa.parse(req.file.buffer.toString('utf8'), { header: true, skipEmptyLines: true });
@@ -1941,6 +1995,16 @@ Count: pass count to limit how many senders to assign. Default assigns all quali
     }, required:['client_id','campaign_id','step_id','subject','body'] },
   },
 
+  {
+    name: 'check_sender_availability',
+    description: 'Check which senders from a list have sends scheduled today (busy) vs none (clean/free). Single optimised call — use this instead of checking campaign schedules one by one. Essential for Tier 2 sender assignment.',
+    inputSchema: { type:'object', properties: {
+      client_id: { type:'string', description:'Client ID' },
+      sender_ids: { type:'array', items:{type:'number'}, description:'Array of sender email IDs to check' },
+      date: { type:'string', description:'Date to check in YYYY-MM-DD format. Defaults to today.' },
+    }, required:['client_id','sender_ids'] },
+  },
+
   // ── Passthrough tools — direct access to any EmailBison API endpoint ──────
   {
     name: 'eb_get',
@@ -2170,26 +2234,43 @@ async function handleMcpTool(name, args) {
         if (r.status === 'fulfilled') r.value.forEach(id => { senderActiveCampCount[id] = (senderActiveCampCount[id]||0)+1; });
       });
 
-      // STEP 3: Build "busy today" sender set for Tier 2 check
-      // Skill: check scheduled emails for each active campaign — senders with sends today are ineligible for Tier 2
+      // STEP 3: Build "busy today" sender set using optimised single-call endpoint
       const todayStr = new Date().toISOString().split('T')[0];
       const busyTodaySenderIds = new Set();
-      const schedResults = await Promise.allSettled(
-        activeCamps.slice(0, 50).map(async camp => {
-          const r = await eb(args.client_id, '/api/campaigns/'+camp.id+'/scheduled-emails?status=scheduled');
-          return (r.data || []);
-        })
-      );
-      schedResults.forEach(r => {
-        if (r.status === 'fulfilled') {
-          r.value.forEach(email => {
-            const schedDate = (email.scheduled_date_local || email.scheduled_date || '').split('T')[0];
-            if (schedDate === todayStr && email.sender_email && email.sender_email.id) {
-              busyTodaySenderIds.add(email.sender_email.id);
-            }
-          });
-        }
-      });
+      try {
+        const allSenderIds = allSenders.map(s => s.id);
+        const availResp = await fetch(
+          (process.env.RAILWAY_PUBLIC_DOMAIN
+            ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN
+            : 'http://localhost:' + (process.env.PORT || 3000))
+          + '/api/tools/sender-availability-check',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ client_id: args.client_id, sender_ids: allSenderIds, date: todayStr }),
+          }
+        );
+        const availData = await availResp.json();
+        if (availData.busy) availData.busy.forEach(id => busyTodaySenderIds.add(Number(id)));
+      } catch (_) {
+        // Fallback: check schedule the old way if self-call fails
+        const schedResults = await Promise.allSettled(
+          activeCamps.slice(0, 50).map(async camp => {
+            const r = await eb(args.client_id, '/api/campaigns/'+camp.id+'/scheduled-emails?status=scheduled');
+            return (r.data || []);
+          })
+        );
+        schedResults.forEach(r => {
+          if (r.status === 'fulfilled') {
+            r.value.forEach(email => {
+              const schedDate = (email.scheduled_date_local || email.scheduled_date || '').split('T')[0];
+              if (schedDate === todayStr && email.sender_email && email.sender_email.id) {
+                busyTodaySenderIds.add(email.sender_email.id);
+              }
+            });
+          }
+        });
+      }
 
       // STEP 4: Apply hard disqualifiers + classify Tier 1 / Tier 2
       const today = new Date();
@@ -3093,6 +3174,19 @@ async function handleMcpTool(name, args) {
       }];
       const result = await eb(args.client_id, `/api/campaigns/${args.campaign_id}/sequence-steps`, 'POST', { title: 'Main Sequence', sequence_steps });
       return { ok: true, variant_of_step_id: args.step_id, result };
+    }
+
+    case 'check_sender_availability': {
+      const checkDate = args.date || new Date().toISOString().split('T')[0];
+      const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN
+        ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN
+        : 'http://localhost:' + (process.env.PORT || 3000);
+      const resp = await fetch(baseUrl + '/api/tools/sender-availability-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_id: args.client_id, sender_ids: args.sender_ids, date: checkDate }),
+      });
+      return await resp.json();
     }
 
     // ── Passthrough tools ───────────────────────────────────────────────────
