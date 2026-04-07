@@ -1300,7 +1300,12 @@ export default function App() {
                               </td>
                               <td style={{ padding:'8px 12px', textAlign:'center', fontSize:11, color:T.textSub }}>
                                 {s.next_send_at
-                                  ? new Date(s.next_send_at).toLocaleDateString('en-US',{month:'short',day:'numeric'})
+                                  ? (() => {
+                                      const today = new Date().toISOString().split('T')[0];
+                                      const d = s.next_send_at.split('T')[0];
+                                      if (d === today) return <span style={{color:'#F59E0B',fontWeight:600}}>Today</span>;
+                                      return new Date(d + 'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'});
+                                    })()
                                   : <span style={{color:T.textMuted}}>—</span>}
                               </td>
                             </tr>
@@ -1860,7 +1865,12 @@ function DraftsTab({ clientId, clients, allSenders }) {
                           </td>
                           <td style={{padding:'8px 12px',textAlign:'center',fontSize:11,color:T.textSub}}>
                             {s.next_send_at
-                              ?new Date(s.next_send_at).toLocaleDateString('en-US',{month:'short',day:'numeric'})
+                              ? (() => {
+                                  const today = new Date().toISOString().split('T')[0];
+                                  const d = s.next_send_at.split('T')[0];
+                                  if (d === today) return <span style={{color:'#F59E0B',fontWeight:600}}>Today</span>;
+                                  return new Date(d + 'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'});
+                                })()
                               :<span style={{color:T.textMuted}}>—</span>}
                           </td>
                         </tr>

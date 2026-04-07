@@ -236,14 +236,23 @@ app.get('/clients/:id/sender-emails', async (req, res) => {
                 senderCampaignCount[sid] = (senderCampaignCount[sid] || 0) + 1;
                 activeCampaignSenders.add(sid);
               });
-              // Track next scheduled send date from campaign data
-              const nextDate = camp.next_send_at || camp.next_scheduled_at || camp.next_email_at || null;
-              if (nextDate) {
-                allSnds.forEach(s => {
-                  const sid = String(s.id);
-                  if (!senderNextSend[sid] || nextDate < senderNextSend[sid]) senderNextSend[sid] = nextDate;
+              // Fetch scheduled emails to find next send date per sender
+              // API does NOT return next_send_at on campaign object — must check scheduled emails
+              try {
+                const todayStr = new Date().toISOString().split('T')[0];
+                const schedR = await eb(req.params.id, `/api/campaigns/${camp.id}/scheduled-emails?status=scheduled`);
+                const schedEmails = schedR.data || [];
+                schedEmails.forEach(email => {
+                  if (!email.sender_email || !email.sender_email.id) return;
+                  const sid = String(email.sender_email.id);
+                  const sendDate = (email.scheduled_date_local || email.scheduled_date || '').split('T')[0];
+                  if (!sendDate) return;
+                  // Track earliest future/today scheduled date per sender
+                  if (!senderNextSend[sid] || sendDate < senderNextSend[sid]) {
+                    senderNextSend[sid] = sendDate;
+                  }
                 });
-              }
+              } catch(_) {}
             }
           } catch(_) {}
         })
