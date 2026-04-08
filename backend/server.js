@@ -26,6 +26,7 @@ const CLIENTS = [
   { id:'upwind',     name:'Upwind',       apiKey:'88|SfBXqTJJaZWqXeExr5t81dC7gvih0VgYjj7PEgu36d566ece' },
   { id:'wisprflow',  name:'WisprFlow',    apiKey:'89|5vPH5Ajl2JDsYRUpRPuujBFdBOKwQ9ZrNJxMs3k0fdb35df3' },
   { id:'founderled',  name:'Founderled',   apiKey:'93|G4WRKr69uHijZerdZvF7vZaVJlGtqLhqcH6lnegH57a3a3bf' },
+  { id:'zeroentropy',  name:'ZeroEntropy',  apiKey:'96|9jmnxZu3MWgUlQrCyAzr7qYIbxdv5AsC9ccrGwNn8eaf1df5' },
 ];
 
 const BASE_URL = process.env.EMAILBISON_URL || 'https://send.founderled.io';
