@@ -1037,76 +1037,123 @@ export default function App() {
               Enter your sequence. Each email is a separate card. Follow-ups send as replies in the same thread.
             </p>
 
-            <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
-              {emailSteps.map((s, i) => (
-                <div key={i} style={{ border:`1.5px solid ${i===0?T.border:'#D1FAE5'}`, borderRadius:14, overflow:'hidden' }}>
-                  {/* Header */}
-                  <div style={{ padding:'10px 18px', background:i===0?T.surfaceAlt:'#ECFDF5',
-                    borderBottom:`1px solid ${i===0?T.border:'#A7F3D0'}`,
-                    display:'flex', alignItems:'center', gap:12 }}>
-                    <div style={{ width:26, height:26, borderRadius:'50%', flexShrink:0,
-                      background:i===0?T.indigo:T.success, color:'#fff',
-                      display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:700 }}>
-                      {i+1}
-                    </div>
-                    <span style={{ fontWeight:700, fontSize:14, flex:1 }}>
-                      {i===0 ? 'Email 1 — Initial outreach' : `Follow-up ${i} — Reply in same thread`}
-                    </span>
-                    {i > 0 && (
-                      <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
-                        <span style={{ fontSize:12, color:T.textSub }}>Send on day</span>
-                        <input type="number" min={1} max={30} value={s.delay_days}
-                          onChange={e=>setEmailSteps(prev=>prev.map((x,j)=>j===i?{...x,delay_days:parseInt(e.target.value)||1}:x))}
-                          style={{ width:52, padding:'4px 8px', border:`1.5px solid ${T.border}`, borderRadius:8,
-                            fontSize:13, textAlign:'center', fontFamily:'inherit', outline:'none', background:T.surface }} />
-                        <label style={{ display:'flex', alignItems:'center', gap:5, cursor:'pointer', fontSize:12, color:T.textSub, userSelect:'none' }}>
-                          <input type="checkbox" checked={s.reply_to_thread !== false}
-                            onChange={e=>setEmailSteps(prev=>prev.map((x,j)=>j===i?{...x,reply_to_thread:e.target.checked}:x))}
-                            style={{ cursor:'pointer', width:14, height:14 }} />
-                          Reply in same thread
-                        </label>
-                        <button onClick={()=>setEmailSteps(prev=>prev.filter((_,j)=>j!==i))}
-                          style={{ background:'none', border:'none', cursor:'pointer', color:T.textMuted, fontSize:18, lineHeight:1 }}>×</button>
-                      </div>
-                    )}
-                  </div>
-                  {/* Subject + Body */}
-                  <div style={{ padding:'14px 18px 16px', display:'flex', flexDirection:'column', gap:10 }}>
-                    <div>
-                      <label style={{ fontSize:11, fontWeight:600, color:T.textMuted, textTransform:'uppercase', letterSpacing:'0.05em', display:'block', marginBottom:5 }}>
-                        Subject{i>0?' (usually Re: [original subject])':''}
-                      </label>
-                      <input value={s.subject}
-                        onChange={e=>setEmailSteps(prev=>prev.map((x,j)=>j===i?{...x,subject:e.target.value}:x))}
-                        placeholder={i===0?'e.g. Quick question about {company}':'e.g. Re: Quick question about {company}'}
-                        style={{ width:'100%', padding:'9px 12px', border:`1.5px solid ${T.border}`, borderRadius:9,
-                          fontSize:14, fontFamily:'inherit', color:T.text, background:T.surface, outline:'none' }} />
-                    </div>
-                    <div>
-                      <label style={{ fontSize:11, fontWeight:600, color:T.textMuted, textTransform:'uppercase', letterSpacing:'0.05em', display:'block', marginBottom:5 }}>
-                        Body
-                      </label>
-                      <textarea rows={18} value={s.body}
-                        onChange={e=>setEmailSteps(prev=>prev.map((x,j)=>j===i?{...x,body:e.target.value}:x))}
-                        placeholder={i===0?'Hi {first_name},\n\n[your message]\n\nBest,\n[Your name]':'[follow-up body]'}
-                        style={{ width:'100%', padding:'10px 12px', border:`1.5px solid ${T.border}`, borderRadius:9,
-                          fontSize:13, fontFamily:'ui-monospace,SFMono-Regular,Menlo,monospace', color:T.text,
-                          background:T.surface, outline:'none', resize:'vertical', lineHeight:1.7 }} />
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
+            {(() => {
+              // Group steps: main steps with their variants nested underneath
+              const mainSteps = emailSteps.filter(s => !s.is_variant);
+              const variantSteps = emailSteps.filter(s => s.is_variant);
+              return (
+                <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+                  {mainSteps.map((s, i) => {
+                    const globalIdx = emailSteps.indexOf(s);
+                    const stepOrder = s.order || (i + 1);
+                    // Find variants belonging to this step
+                    const myVariants = variantSteps.filter(v =>
+                      v.variant_of_step_id === s.id ||
+                      (v.order != null && v.order === stepOrder)
+                    );
+                    return (
+                      <div key={globalIdx}>
+                        {/* Main step card */}
+                        <div style={{ border:`1.5px solid ${i===0?T.border:'#D1FAE5'}`, borderRadius:14, overflow:'hidden' }}>
+                          <div style={{ padding:'10px 18px', background:i===0?T.surfaceAlt:'#ECFDF5',
+                            borderBottom:`1px solid ${i===0?T.border:'#A7F3D0'}`,
+                            display:'flex', alignItems:'center', gap:12 }}>
+                            <div style={{ width:26, height:26, borderRadius:'50%', flexShrink:0,
+                              background:i===0?T.indigo:T.success, color:'#fff',
+                              display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:700 }}>
+                              {i+1}
+                            </div>
+                            <span style={{ fontWeight:700, fontSize:14, flex:1 }}>
+                              {i===0 ? 'Email 1 — Initial outreach' : `Follow-up ${i}`}
+                              {myVariants.length > 0 && <span style={{ fontSize:11, marginLeft:8, color:'#7C3AED', fontWeight:600 }}>+ {myVariants.length} variant{myVariants.length>1?'s':''}</span>}
+                            </span>
+                            {i > 0 && (
+                              <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+                                <span style={{ fontSize:12, color:T.textSub }}>Day</span>
+                                <input type="number" min={1} max={90} value={s.delay_days}
+                                  onChange={e=>setEmailSteps(prev=>prev.map((x,j)=>j===globalIdx?{...x,delay_days:parseInt(e.target.value)||1}:x))}
+                                  style={{ width:52, padding:'4px 8px', border:`1.5px solid ${T.border}`, borderRadius:8,
+                                    fontSize:13, textAlign:'center', fontFamily:'inherit', outline:'none', background:T.surface }} />
+                                <label style={{ display:'flex', alignItems:'center', gap:5, cursor:'pointer', fontSize:12, color:T.textSub, userSelect:'none' }}>
+                                  <input type="checkbox" checked={s.reply_to_thread !== false}
+                                    onChange={e=>setEmailSteps(prev=>prev.map((x,j)=>j===globalIdx?{...x,reply_to_thread:e.target.checked}:x))}
+                                    style={{ cursor:'pointer', width:14, height:14 }} />
+                                  Thread reply
+                                </label>
+                                <button onClick={()=>setEmailSteps(prev=>prev.filter((_,j)=>j!==globalIdx && !myVariants.map(v=>emailSteps.indexOf(v)).includes(j)))}
+                                  style={{ background:'none', border:'none', cursor:'pointer', color:T.textMuted, fontSize:18, lineHeight:1 }}>×</button>
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ padding:'14px 18px 16px', display:'flex', flexDirection:'column', gap:10 }}>
+                            <div>
+                              <label style={{ fontSize:11, fontWeight:600, color:T.textMuted, textTransform:'uppercase', letterSpacing:'0.05em', display:'block', marginBottom:5 }}>
+                                Subject{myVariants.length>0?' (A)':''}
+                              </label>
+                              <input value={s.subject}
+                                onChange={e=>setEmailSteps(prev=>prev.map((x,j)=>j===globalIdx?{...x,subject:e.target.value}:x))}
+                                placeholder={i===0?'e.g. Quick question about {company}':'Re: [original subject]'}
+                                style={{ width:'100%', padding:'9px 12px', border:`1.5px solid ${T.border}`, borderRadius:9,
+                                  fontSize:14, fontFamily:'inherit', color:T.text, background:T.surface, outline:'none' }} />
+                            </div>
+                            <div>
+                              <label style={{ fontSize:11, fontWeight:600, color:T.textMuted, textTransform:'uppercase', letterSpacing:'0.05em', display:'block', marginBottom:5 }}>
+                                Body{myVariants.length>0?' (A)':''}
+                              </label>
+                              <textarea rows={8} value={s.body}
+                                onChange={e=>setEmailSteps(prev=>prev.map((x,j)=>j===globalIdx?{...x,body:e.target.value}:x))}
+                                placeholder={i===0?'Hi {first_name},\n\n[your message]\n\nBest,\n[Your name]':'[follow-up body]'}
+                                style={{ width:'100%', padding:'10px 12px', border:`1.5px solid ${T.border}`, borderRadius:9,
+                                  fontSize:13, fontFamily:'ui-monospace,SFMono-Regular,Menlo,monospace', color:T.text,
+                                  background:T.surface, outline:'none', resize:'vertical', lineHeight:1.7 }} />
+                            </div>
+                          </div>
+                        </div>
 
-            {/* Add follow-up */}
-            {emailSteps.length < 5 && (
-              <button onClick={()=>setEmailSteps(prev=>[...prev,{subject:'',body:'',delay_days:prev.length*3,reply_to_thread:true}])}
-                style={{ marginTop:12, width:'100%', padding:'11px', border:`2px dashed ${T.border}`,
-                  borderRadius:12, background:'transparent', cursor:'pointer', fontSize:13,
-                  color:T.textSub, fontWeight:600, fontFamily:'inherit' }}>
-                + Add follow-up email
-              </button>
-            )}
+                        {/* Variant cards — nested under parent step */}
+                        {myVariants.map((v, vi) => {
+                          const vIdx = emailSteps.indexOf(v);
+                          return (
+                            <div key={vIdx} style={{ marginLeft:24, marginTop:6, border:'1.5px solid #DDD6FE', borderRadius:12, overflow:'hidden' }}>
+                              <div style={{ padding:'8px 16px', background:'#F5F3FF', borderBottom:'1px solid #DDD6FE',
+                                display:'flex', alignItems:'center', gap:8 }}>
+                                <span style={{ fontSize:11, fontWeight:700, color:'#7C3AED', background:'#EDE9FE', borderRadius:6, padding:'2px 8px' }}>
+                                  Variant {String.fromCharCode(66+vi)}
+                                </span>
+                                <span style={{ fontSize:12, color:'#7C3AED', flex:1 }}>Split test variant of Email {i+1}</span>
+                                <button onClick={()=>setEmailSteps(prev=>prev.filter((_,j)=>j!==vIdx))}
+                                  style={{ background:'none', border:'none', cursor:'pointer', color:'#9CA3AF', fontSize:16, lineHeight:1 }}>×</button>
+                              </div>
+                              <div style={{ padding:'12px 16px', display:'flex', flexDirection:'column', gap:8, background:'#FAFAFF' }}>
+                                <input value={v.subject}
+                                  onChange={e=>setEmailSteps(prev=>prev.map((x,j)=>j===vIdx?{...x,subject:e.target.value}:x))}
+                                  placeholder='Variant subject line'
+                                  style={{ width:'100%', padding:'8px 12px', border:'1.5px solid #DDD6FE', borderRadius:8,
+                                    fontSize:13, fontFamily:'inherit', color:T.text, background:'#fff', outline:'none' }} />
+                                <textarea rows={6} value={v.body}
+                                  onChange={e=>setEmailSteps(prev=>prev.map((x,j)=>j===vIdx?{...x,body:e.target.value}:x))}
+                                  placeholder='Variant email body'
+                                  style={{ width:'100%', padding:'8px 12px', border:'1.5px solid #DDD6FE', borderRadius:8,
+                                    fontSize:12, fontFamily:'ui-monospace,SFMono-Regular,Menlo,monospace', color:T.text,
+                                    background:'#fff', outline:'none', resize:'vertical', lineHeight:1.6 }} />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+
+            {/* Add follow-up — no limit */}
+            <button onClick={()=>setEmailSteps(prev=>[...prev,{subject:'',body:'',delay_days:prev.filter(s=>!s.is_variant).length*3,reply_to_thread:true,is_variant:false}])}
+              style={{ marginTop:12, width:'100%', padding:'11px', border:`2px dashed ${T.border}`,
+                borderRadius:12, background:'transparent', cursor:'pointer', fontSize:13,
+                color:T.textSub, fontWeight:600, fontFamily:'inherit' }}>
+              + Add follow-up email
+            </button>
 
             {/* Inline template/campaign picker */}
             <div style={{ marginTop:16, padding:'12px 16px', background:T.surfaceAlt, borderRadius:10,

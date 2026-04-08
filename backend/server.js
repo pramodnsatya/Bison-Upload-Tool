@@ -452,8 +452,16 @@ app.post('/clients/:id/campaigns/:cid/sequence', async (req, res) => {
 
     // Step 1: Delete all existing sequence steps first
     try {
-      const existing = await eb(req.params.id, `/api/campaigns/${req.params.cid}/sequence-steps?per_page=20`);
-      const existingSteps = existing.data || (Array.isArray(existing) ? existing : []);
+      const exFirst = await eb(req.params.id, `/api/campaigns/${req.params.cid}/sequence-steps?page=1`);
+      let existingSteps = exFirst.data || (Array.isArray(exFirst) ? exFirst : []);
+      const exLastPage = exFirst.meta?.last_page || 1;
+      if (exLastPage > 1) {
+        const exPages = Array.from({length: exLastPage-1}, (_,i) => i+2);
+        const exResults = await Promise.all(exPages.map(p =>
+          eb(req.params.id, `/api/campaigns/${req.params.cid}/sequence-steps?page=${p}`).catch(()=>({data:[]}))
+        ));
+        exResults.forEach(r => { existingSteps = existingSteps.concat(r.data || []); });
+      }
       await Promise.all(
         existingSteps.map(s =>
           eb(req.params.id, `/api/campaigns/sequence-steps/${s.id}`, 'DELETE').catch(() => {})
@@ -569,16 +577,19 @@ app.get('/clients/:id/campaigns/:cid/sequence', async (req, res) => {
     }));
   };
   try {
-    // Try primary: /api/campaigns/{id}/sequence-steps
-    const data = await eb(req.params.id, `/api/campaigns/${req.params.cid}/sequence-steps?per_page=20`);
-    res.json(normalise(data));
-  } catch (_) {
-    try {
-      // Fallback: /api/campaigns/sequence-steps?campaign_id=
-      const data = await eb(req.params.id, `/api/campaigns/sequence-steps?campaign_id=${req.params.cid}&per_page=20`);
-      res.json(normalise(data));
-    } catch (e) { res.status(500).json({ error: e.message }); }
-  }
+    // Paginate — API ignores per_page, always returns 15/page
+    const first = await eb(req.params.id, `/api/campaigns/${req.params.cid}/sequence-steps?page=1`);
+    let all = first.data || (Array.isArray(first) ? first : []);
+    const lastPage = first.meta?.last_page || 1;
+    if (lastPage > 1) {
+      const pages = Array.from({length: lastPage-1}, (_,i) => i+2);
+      const results = await Promise.all(pages.map(p =>
+        eb(req.params.id, `/api/campaigns/${req.params.cid}/sequence-steps?page=${p}`).catch(()=>({data:[]}))
+      ));
+      results.forEach(r => { all = all.concat(r.data || (Array.isArray(r) ? r : [])); });
+    }
+    res.json(normalise({data: all}));
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // List/search campaigns (used for template library dropdown)
@@ -804,7 +815,7 @@ app.get('/clients/:id/campaigns/:cid/senders-debug', async (req, res) => {
 // Debug: see raw sequence steps structure including split variants
 app.get('/clients/:id/campaigns/:cid/sequence-raw', async (req, res) => {
   try {
-    const data = await eb(req.params.id, `/api/campaigns/${req.params.cid}/sequence-steps?per_page=50`);
+    const data = await eb(req.params.id, `/api/campaigns/${req.params.cid}/sequence-steps?page=1`);
     res.json(data);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
