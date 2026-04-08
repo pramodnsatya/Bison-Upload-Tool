@@ -620,7 +620,8 @@ export default function App() {
       <div style={{ background:T.surface, borderBottom:`1px solid ${T.border}`, padding:'0 24px' }}>
         <div style={{ maxWidth:920, margin:'0 auto', height:60, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
           <div style={{ display:'flex', alignItems:'center', gap:24 }}>
-            <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+            <div onClick={()=>{ setActiveTab('deploy'); setStep(1); }}
+              style={{ display:'flex', alignItems:'center', gap:10, cursor:'pointer' }}>
               <div style={{ width:32, height:32, background:T.indigo, borderRadius:8, display:'flex', alignItems:'center', justifyContent:'center', fontSize:16 }}>📧</div>
               <div>
                 <div style={{ fontWeight:700, fontSize:15, color:T.text, lineHeight:1.2 }}>Campaign Deployer</div>
