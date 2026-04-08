@@ -461,21 +461,47 @@ app.post('/clients/:id/campaigns/:cid/sequence', async (req, res) => {
       );
     } catch (_) {}
 
-    // Step 2: Create new sequence steps
+    // Step 2: Build sequence steps — preserve variants and thread_reply from source
+    // Group by order: non-variants define the step, variants are A/B splits
     const firstSubject = steps[0]?.subject || '';
-    const sequence_steps = steps.map((s, i) => {
-      const isReply = s.reply_to_thread !== false && i > 0;
-      // EmailBison requires email_subject even for thread replies — use original subject
-      const subject = s.subject?.trim() 
-        ? s.subject 
-        : (isReply ? firstSubject : 'Follow-up');
-      return {
+
+    // Separate main steps and variants
+    const mainSteps = steps.filter(s => !s.is_variant);
+    const variantSteps = steps.filter(s => s.is_variant);
+
+    const sequence_steps = [];
+
+    mainSteps.forEach((s, i) => {
+      const defaultReply = i > 0;
+      const isReply = s.reply_to_thread !== undefined ? s.reply_to_thread : defaultReply;
+      const subject = s.subject?.trim() ? s.subject : (isReply ? firstSubject : 'Follow-up');
+      const order = s.order || (i + 1);
+      const waitDays = Math.max(1, i === 0 ? 1 : (s.delay_days ?? i * 3));
+
+      // Push the main step
+      sequence_steps.push({
         email_subject:   subject,
         email_body:      s.body,
-        wait_in_days:    Math.max(1, i === 0 ? 1 : (s.delay_days ?? i * 3)),
-        order:           i + 1,
+        wait_in_days:    waitDays,
+        order:           order,
         reply_to_thread: isReply,
-      };
+        variant:         false,
+      });
+
+      // Push any variants that belong to this step (matched by variant_of_step_id or same order)
+      variantSteps
+        .filter(v => v.variant_of_step_id === s.id || v.variant_of_step_id === null && v.order === order)
+        .forEach(v => {
+          sequence_steps.push({
+            email_subject:   v.subject?.trim() ? v.subject : subject,
+            email_body:      v.body,
+            wait_in_days:    waitDays,
+            order:           order,
+            reply_to_thread: isReply,
+            variant:         true,
+            variant_from_step: order, // link to parent by order number
+          });
+        });
     });
 
     const data = await eb(req.params.id,
@@ -527,14 +553,20 @@ app.post('/clients/:id/campaigns/:cid/senders', async (req, res) => {
 app.get('/clients/:id/campaigns/:cid/sequence', async (req, res) => {
   const normalise = raw => {
     const arr = Array.isArray(raw) ? raw : (raw.data || raw.sequence_steps || []);
-    return arr.map(s => ({
-      id:         s.id,
-      subject:    s.subject || s.email_subject || '',
-      body:       s.body || s.email_body || s.content || '',
-      delay_days: s.delay_days ?? s.wait_in_days ?? s.delay ?? 0,
-      is_reply:   s.reply_to_thread ?? s.is_reply ?? false,
-      order:      s.order ?? s.position ?? 0,
-    })).sort((a, b) => a.order - b.order);
+    // Sort: non-variants first within each order position, then variants
+    const sorted = arr.sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || (a.variant ? 1 : -1));
+    return sorted.map(s => ({
+      id:                  s.id,
+      subject:             s.subject || s.email_subject || '',
+      body:                s.body || s.email_body || s.content || '',
+      delay_days:          s.delay_days ?? s.wait_in_days ?? s.delay ?? 0,
+      is_reply:            s.reply_to_thread ?? s.is_reply ?? false,
+      thread_reply:        s.reply_to_thread ?? s.thread_reply ?? false,
+      order:               s.order ?? s.position ?? 0,
+      is_variant:          s.variant ?? false,
+      variant_of_step_id:  s.variant_from_step_id ?? null,
+      active:              s.active ?? true,
+    }));
   };
   try {
     // Try primary: /api/campaigns/{id}/sequence-steps

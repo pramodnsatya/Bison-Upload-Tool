@@ -350,6 +350,9 @@ function CampaignSequencePicker({ clientId, onSelect }) {
             subject:s.subject||'',
             body:stripHtml(s.body||''),
             delay_days:Math.max(1,s.delay_days||1),
+            thread_reply:s.thread_reply??s.is_reply??false,
+            is_variant:s.is_variant??false,
+            variant_of_step_id:s.variant_of_step_id??null,
           })));
         } catch(_){}
       }}
@@ -1510,6 +1513,9 @@ function DraftsTab({ clientId, clients, allSenders }) {
       subject: s.subject || s.email_subject || '',
       body: stripHtml(s.body || s.email_body || ''),
       delay_days: Math.max(1, s.delay_days || 1),
+      thread_reply: s.thread_reply ?? s.is_reply ?? false,
+      is_variant: s.is_variant ?? false,
+      variant_of_step_id: s.variant_of_step_id ?? null,
     }));
     if (s.length) setSteps(s);
   }
